@@ -24,7 +24,7 @@ A layered modular monolith ships as one executable from one Cargo package. The C
 
 ## Conventions and security
 
-Keep analysis read-only. Build the complete operation plan before applying changes and require interactive confirmation before execution. Test name collisions and partial failures before enabling file mutations. Keep media and metadata local. Preserve native path types at filesystem boundaries. The original README defines expected behavior.
+Keep analysis read-only. Build the complete operation plan before applying changes and require interactive confirmation before execution. Test name collisions and partial failures before enabling file mutations. Keep media and metadata local. Application execution emits phase-local counts to a callback. The CLI renders them on terminals and handles display errors independently of filesystem execution. Preserve native path types at filesystem boundaries. The original README defines expected behavior.
 
 ## Testing strategy
 

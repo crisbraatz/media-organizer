@@ -1,3 +1,5 @@
+mod progress;
+
 mod interactive;
 
 mod terminal;
@@ -191,7 +193,17 @@ fn apply_prepared(
         eprintln!("Cannot apply: {error}");
         return ExitCode::FAILURE;
     }
-    match apply::execute(source, plan) {
+    let mut display = (io::stdin().is_terminal() && io::stdout().is_terminal())
+        .then(|| progress::Display::new(io::stdout().lock()));
+    let result = apply::execute(source, plan, |event| {
+        if let Some(display) = &mut display {
+            display.report(event);
+        }
+    });
+    if let Some(mut display) = display {
+        display.finish();
+    }
+    match result {
         Ok(summary) => {
             println!("Renamed {} media files.", summary.renamed);
             if options.remove_duplicates {

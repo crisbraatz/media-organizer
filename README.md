@@ -31,6 +31,8 @@ A `[blocked]` row marks an observed destination occupied by an entry that the pl
 
 Run `media-organizer --apply "/path/to/folder"` and review the displayed names. Type `yes` and press Enter to apply them. To choose the folder at the prompt, omit the path. Any other answer or an incomplete confirmation cancels the operation.
 
+After confirmation, the terminal shows a progress bar with the current step and its count. If renaming fails, the bar shows attempts to restore the original names and the final output reports any unresolved files. Analysis, previews and redirected runs keep their plain output.
+
 The command checks the reviewed plan again before moving files and uses native operations that leave existing destinations intact. Files remain in their original folders. A filesystem that cannot perform an exclusive rename causes the operation to stop. If a rename fails, the command attempts to restore the original names and reports any files that need manual recovery.
 
 Avoid editing the folder during an apply operation. Validation checks the live filesystem on a best-effort basis. The command can attempt recovery after a reported move error. A process interruption can leave files at a final name or under temporary `.media-organizer-*.stage` names.

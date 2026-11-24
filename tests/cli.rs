@@ -458,6 +458,15 @@ fn flatten_preview_cancel_and_apply_compose_with_duplicate_removal() {
     assert!(applied.status.success(), "{:?}", applied.stderr);
     let text = String::from_utf8(applied.stdout).unwrap();
     assert!(text.contains("Removed 1 duplicate") && text.contains("Removed 2 empty subfolders"));
+    for terminal_output in [
+        "Preparing files",
+        "Renaming ",
+        "Removing duplicates",
+        "Checking subfolders",
+        "\x1b",
+    ] {
+        assert!(!text.contains(terminal_output), "{text}");
+    }
     assert!(!root.0.join("a").exists());
     assert!(!occupied_after.join("copy.JPG").exists());
     assert_eq!(

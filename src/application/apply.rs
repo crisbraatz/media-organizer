@@ -130,9 +130,42 @@ struct PendingMove<'a> {
     location: Location,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Phase {
+    Staging,
+    Renaming,
+    RemovingDuplicates,
+    CheckingDirectories,
+    Restoring,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Progress {
+    pub(crate) phase: Phase,
+    pub(crate) completed: usize,
+    pub(crate) total: usize,
+}
+
+impl Phase {
+    fn snapshot(self, completed: usize, total: usize) -> Progress {
+        Progress {
+            phase: self,
+            completed,
+            total,
+        }
+    }
+
+    fn start(self, total: usize, report: &mut impl FnMut(Progress)) {
+        if total != 0 {
+            report(self.snapshot(0, total));
+        }
+    }
+}
+
 fn finish_renames<'a>(
     source: &impl RenameSource,
     approved: &'a PreparedApply,
+    report: &mut impl FnMut(Progress),
 ) -> Result<Vec<PendingMove<'a>>, ApplyFailure> {
     if approved.rows.iter().any(|row| row.blocked) {
         return Err(ApplyFailure {
@@ -170,11 +203,11 @@ fn finish_renames<'a>(
         })
         .collect();
 
-    match perform_moves(source, &approved.root, &mut moves) {
+    match perform_moves(source, &approved.root, &mut moves, report) {
         Ok(()) => Ok(moves),
         Err(trigger) => Err(ApplyFailure {
             trigger,
-            recovery: restore(source, &approved.root, &mut moves),
+            recovery: restore(source, &approved.root, &mut moves, report),
         }),
     }
 }
@@ -200,8 +233,9 @@ pub(crate) enum CleanupError {
 pub(crate) fn execute(
     source: &(impl RenameSource + DuplicateRemoval),
     approved: &PreparedApply,
+    mut report: impl FnMut(Progress),
 ) -> Result<ApplySummary, CleanupError> {
-    let moves = finish_renames(source, approved).map_err(CleanupError::Rename)?;
+    let moves = finish_renames(source, approved, &mut report).map_err(CleanupError::Rename)?;
     let renamed = moves.len() - approved.duplicates.len();
     let destinations: HashMap<_, _> = approved
         .rows
@@ -210,6 +244,8 @@ pub(crate) fn execute(
         .collect();
     let mut staged = moves[renamed..].iter();
     let mut removed = Vec::new();
+    let copies_total = approved.duplicates.len();
+    Phase::RemovingDuplicates.start(copies_total, &mut report);
     for copy in &approved.duplicates {
         let movement = staged.next().expect("one stage per duplicate");
         let request = StagedCopy {
@@ -230,6 +266,7 @@ pub(crate) fn execute(
             });
         }
         removed.push(movement.original.to_path_buf());
+        report(Phase::RemovingDuplicates.snapshot(removed.len(), copies_total));
     }
     let mut summary = ApplySummary {
         renamed,
@@ -237,11 +274,14 @@ pub(crate) fn execute(
         directories_removed: 0,
         directory_errors: Vec::new(),
     };
-    for (path, observation) in &approved.directories {
+    let directories_total = approved.directories.len();
+    Phase::CheckingDirectories.start(directories_total, &mut report);
+    for (index, (path, observation)) in approved.directories.iter().enumerate() {
         match source.remove_empty_directory(&approved.root, path, observation) {
             Ok(removed) => summary.directories_removed += usize::from(removed),
             Err(error) => summary.directory_errors.push(error),
         }
+        report(Phase::CheckingDirectories.snapshot(index + 1, directories_total));
     }
     Ok(summary)
 }
@@ -257,7 +297,10 @@ fn perform_moves(
     source: &impl RenameSource,
     root: &Path,
     moves: &mut [PendingMove<'_>],
+    report: &mut impl FnMut(Progress),
 ) -> io::Result<()> {
+    let total = moves.len();
+    Phase::Staging.start(total, report);
     for (index, movement) in moves.iter_mut().enumerate() {
         for attempt in 0..16 {
             movement.staged = stage_path(movement.original, index, attempt);
@@ -269,6 +312,7 @@ fn perform_moves(
             ) {
                 Ok(()) => {
                     movement.location = Location::Staged;
+                    report(Phase::Staging.snapshot(index + 1, total));
                     break;
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists && attempt < 15 => {}
@@ -277,12 +321,20 @@ fn perform_moves(
         }
     }
 
-    for movement in moves {
-        let Some(destination) = movement.destination else {
-            continue;
-        };
+    let total = moves
+        .iter()
+        .filter(|movement| movement.destination.is_some())
+        .count();
+    Phase::Renaming.start(total, report);
+    let changed = moves.iter_mut().filter_map(|movement| {
+        movement
+            .destination
+            .map(|destination| (movement, destination))
+    });
+    for (index, (movement, destination)) in changed.enumerate() {
         source.move_exclusive(root, &movement.staged, destination, movement.observation)?;
         movement.location = Location::Final;
+        report(Phase::Renaming.snapshot(index + 1, total));
     }
     Ok(())
 }
@@ -291,7 +343,13 @@ fn restore(
     source: &impl RenameSource,
     root: &Path,
     moves: &mut [PendingMove<'_>],
+    report: &mut impl FnMut(Progress),
 ) -> Vec<RecoveryFailure> {
+    let total = moves
+        .iter()
+        .filter(|movement| movement.location != Location::Original)
+        .count();
+    Phase::Restoring.start(total, report);
     // Vacate final names before restoring, since those names may be other originals.
     for movement in moves
         .iter_mut()
@@ -312,9 +370,13 @@ fn restore(
     }
 
     let mut failures = Vec::new();
-    for movement in moves.iter_mut().rev() {
+    let pending = moves
+        .iter_mut()
+        .rev()
+        .filter(|movement| movement.location != Location::Original);
+    for (index, movement) in pending.enumerate() {
         let last_known = match movement.location {
-            Location::Original => continue,
+            Location::Original => unreachable!(),
             Location::Staged => &movement.staged,
             Location::Final => movement.destination.expect("final move has a destination"),
         };
@@ -326,6 +388,7 @@ fn restore(
                 error,
             }),
         }
+        report(Phase::Restoring.snapshot(index + 1, total));
     }
     failures
 }
@@ -354,7 +417,15 @@ mod tests {
         let plan = prepare_apply(&LocalMediaSource, &scratch.0, options).unwrap();
         fs::write(occupied.join("new.txt"), b"new occupant").unwrap();
         revalidate(&LocalMediaSource, &scratch.0, &plan).unwrap();
-        let result = execute(&LocalMediaSource, &plan).unwrap();
+        let mut events = Vec::new();
+        let result = execute(&LocalMediaSource, &plan, |event| events.push(event)).unwrap();
+        assert_eq!(result.directories_removed, 2);
+        assert!(events.ends_with(&[
+            Phase::CheckingDirectories.snapshot(0, 3),
+            Phase::CheckingDirectories.snapshot(1, 3),
+            Phase::CheckingDirectories.snapshot(2, 3),
+            Phase::CheckingDirectories.snapshot(3, 3),
+        ]));
         assert_eq!(result.renamed, 2);
         assert!(!scratch.0.join("affected").exists());
         assert_eq!(fs::read(occupied.join("new.txt")).unwrap(), b"new occupant");
@@ -387,7 +458,7 @@ mod tests {
             },
         )
         .unwrap();
-        let result = execute(&LocalMediaSource, &plan).unwrap();
+        let result = execute(&LocalMediaSource, &plan, |_| {}).unwrap();
         assert_eq!(result.renamed, 1);
         assert_eq!(result.removed, 2);
         assert_eq!(fs::read(incoming.join("1.JPG")).unwrap(), b"same");
@@ -415,7 +486,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.duplicates.len(), 1);
-        let result = execute(&LocalMediaSource, &plan).unwrap();
+        let result = execute(&LocalMediaSource, &plan, |_| {}).unwrap();
         assert_eq!(result.renamed, 2);
         assert_eq!(result.removed, 1);
         assert_eq!(fs::read(earlier.join("1.JPG")).unwrap(), b"same");
@@ -678,7 +749,7 @@ mod execution_tests {
         add_copy(&adapter, &mut plan, "copy.jpg");
         let before = adapter.files.borrow().clone();
 
-        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+        let CleanupError::Rename(error) = execute(&adapter, &plan, |_| {}).unwrap_err() else {
             panic!("expected rename failure");
         };
         assert!(error.recovery.is_empty());
@@ -693,14 +764,19 @@ mod execution_tests {
         }
         adapter.cleanup_failure = Some(stage_path(&plan.root.join("copy2.jpg"), 3, 0));
 
+        let mut events = Vec::new();
         let CleanupError::Removal {
             trigger,
             removed,
             remaining,
-        } = execute(&adapter, &plan).unwrap_err()
+        } = execute(&adapter, &plan, |event| events.push(event)).unwrap_err()
         else {
             panic!("expected cleanup failure");
         };
+        assert!(events.ends_with(&[
+            Phase::RemovingDuplicates.snapshot(0, 3),
+            Phase::RemovingDuplicates.snapshot(1, 3),
+        ]));
         assert_eq!(trigger.to_string(), "injected cleanup failure");
         assert_eq!(removed, [plan.root.join("copy1.jpg")]);
         let files = adapter.files.borrow();
@@ -716,7 +792,24 @@ mod execution_tests {
     #[test]
     fn stages_all_sources_before_applying_a_swap() {
         let (adapter, plan) = sample(Vec::new());
-        assert_eq!(execute(&adapter, &plan).unwrap().renamed, 2);
+        let mut events = Vec::new();
+        assert_eq!(
+            execute(&adapter, &plan, |event| events.push(event))
+                .unwrap()
+                .renamed,
+            2
+        );
+        assert_eq!(
+            events,
+            [
+                Phase::Staging.snapshot(0, 2),
+                Phase::Staging.snapshot(1, 2),
+                Phase::Staging.snapshot(2, 2),
+                Phase::Renaming.snapshot(0, 2),
+                Phase::Renaming.snapshot(1, 2),
+                Phase::Renaming.snapshot(2, 2),
+            ]
+        );
         assert_eq!(
             *adapter.files.borrow(),
             [("root/1.jpg".into(), 2), ("root/2.jpg".into(), 1)].into()
@@ -726,7 +819,7 @@ mod execution_tests {
     #[test]
     fn restores_already_finalized_and_staged_sources() {
         let (adapter, plan) = sample(vec![(None, "root/1.jpg".into())]);
-        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+        let CleanupError::Rename(error) = execute(&adapter, &plan, |_| {}).unwrap_err() else {
             panic!("expected rename failure");
         };
         assert!(error.recovery.is_empty());
@@ -753,7 +846,7 @@ mod execution_tests {
         let first_destination = plan.rows[0].name.destination.clone();
         let occupied = plan.rows[1].name.destination.clone();
         adapter.files.borrow_mut().insert(occupied.clone(), 9);
-        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+        let CleanupError::Rename(error) = execute(&adapter, &plan, |_| {}).unwrap_err() else {
             panic!("expected a late destination collision");
         };
         assert_eq!(error.trigger.kind(), ErrorKind::AlreadyExists);
@@ -777,7 +870,7 @@ mod execution_tests {
         let failed = stage_path(second, 1, 1);
         let (adapter, plan) = sample(vec![(Some(second.to_path_buf()), failed)]);
         adapter.files.borrow_mut().insert(occupied.clone(), 9);
-        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+        let CleanupError::Rename(error) = execute(&adapter, &plan, |_| {}).unwrap_err() else {
             panic!("expected rename failure");
         };
 
@@ -799,10 +892,18 @@ mod execution_tests {
             (None, "root/1.jpg".into()),
             (None, "root/1.jpg".into()),
         ]);
-        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+        let mut events = Vec::new();
+        let CleanupError::Rename(error) =
+            execute(&adapter, &plan, |event| events.push(event)).unwrap_err()
+        else {
             panic!("expected rename failure");
         };
         assert_eq!(error.recovery.len(), 1);
+        assert!(events.ends_with(&[
+            Phase::Restoring.snapshot(0, 2),
+            Phase::Restoring.snapshot(1, 2),
+            Phase::Restoring.snapshot(2, 2),
+        ]));
         let unresolved = &error.recovery[0];
         assert_eq!(unresolved.original, Path::new("root/1.jpg"));
         assert_ne!(unresolved.last_known, unresolved.original);
