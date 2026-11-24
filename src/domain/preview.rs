@@ -7,6 +7,7 @@ pub(crate) struct DatedMedia {
     pub(crate) timestamp: Option<SystemTime>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct ProposedName {
     pub(crate) source: PathBuf,
     pub(crate) destination: PathBuf,

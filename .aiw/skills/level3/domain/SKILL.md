@@ -22,6 +22,8 @@ updated: 2026-11-24
 
 5. A prévia calcula uma sequência por pasta. Datas indisponíveis ficam no fim, empates seguem o nome atual e a extensão é preservada. A prévia indica destinos ocupados por entradas que ficam no lugar (funcionalidade 002).
 
+6. Ao aplicar uma prévia, confirme o plano antes de renomear. Destinos que ficam ocupados bloqueiam a ação. Se uma operação falhar, tente restaurar os nomes originais e identifique qualquer recuperação manual (funcionalidade 003).
+
 ## Invariantes
 
 - A análise é apresentada antes de qualquer alteração.

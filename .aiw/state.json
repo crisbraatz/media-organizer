@@ -20,6 +20,10 @@
     {
       "name": "nom-exif",
       "version": "3.8.0"
+    },
+    {
+      "name": "renamest",
+      "version": "0.1.3"
     }
   ],
   "architecture": "Layered modular monolith",
@@ -66,6 +70,14 @@
         "sources": [
           "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax"
         ]
+      },
+      {
+        "name": "renamest",
+        "kind": "technology",
+        "sources": [
+          "https://docs.rs/crate/renamest/0.1.3",
+          "https://learn.microsoft.com/openspecs/windows_protocols/ms-fsa/87f86c9b-6c2a-4803-84b7-131a74a434fa"
+        ]
       }
     ],
     "level3": [
@@ -77,5 +89,5 @@
   },
   "currentFeature": null,
   "checkpoint": null,
-  "featureCounter": 2
+  "featureCounter": 3
 }

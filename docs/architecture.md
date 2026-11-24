@@ -7,6 +7,7 @@
 | Language and build | Rust and Cargo | 1.100.0 toolchain, Edition 2024 | Portable native CLI |
 | Terminal | Crossterm | 0.29.0 | Keyboard events and terminal rendering |
 | Metadata | nom-exif | 3.8.0 | Read embedded capture times for the optional preview |
+| Filesystem | renamest | 0.1.3 | Native no-replace renames |
 
 ## Architecture style
 
@@ -41,3 +42,10 @@ Accepted. Use Rust and a layered modular monolith to keep distribution simple wh
 ## ADR-002 — Preview timestamp source
 
 Accepted for the read-only preview. Use nom-exif 3.8.0 in infrastructure to read image capture and video creation tags. Generated JPEG, DNG and MP4 fixtures exercise the parser. When metadata is absent, malformed or unsupported, use file creation time when available. Interpret offset-free metadata as UTC. The OSV audit identified an informational maintenance notice for the indirect chrono dependency. [RustSec advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543.html)
+
+
+## ADR-003 — Exclusive two-phase renames
+
+Accepted. Apply only the approved plan after validating it again. Stage changed names in the same directory before installing final names so cycles can proceed. Use native exclusive renames for every stage and restoration. On a reported failure, reverse final moves before restoring original names. List the last known path for each incomplete recovery. Process interruption can leave temporary names because this feature uses in-memory recovery state.
+
+Preflight compares full source observations. On Windows, the per-move check omits creation time because the filesystem can change it when a name is reused. The checks are best-effort when the filesystem changes concurrently. [Renamest](https://docs.rs/crate/renamest/0.1.3) · [Microsoft file rename specification](https://learn.microsoft.com/openspecs/windows_protocols/ms-fsa/87f86c9b-6c2a-4803-84b7-131a74a434fa)

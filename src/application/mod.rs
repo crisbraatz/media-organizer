@@ -27,11 +27,33 @@ pub(crate) trait MediaSource {
     fn contents_equal(&self, first: &Path, second: &Path) -> io::Result<bool>;
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceObservation {
+    pub(crate) len: u64,
+    pub(crate) modified: Option<SystemTime>,
+    pub(crate) created: Option<SystemTime>,
+    #[cfg(unix)]
+    pub(crate) device_inode: (u64, u64),
+}
+
+pub(crate) trait RenameSource {
+    fn canonical_root(&self, root: &Path) -> io::Result<PathBuf>;
+    fn observe_source(&self, root: &Path, source: &Path) -> io::Result<SourceObservation>;
+    fn move_exclusive(
+        &self,
+        root: &Path,
+        source: &Path,
+        destination: &Path,
+        observation: &SourceObservation,
+    ) -> io::Result<()>;
+}
+
 pub(crate) struct Analysis {
     pub(crate) report: AnalysisReport,
     pub(crate) preview: Option<Vec<PreviewRow>>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PreviewRow {
     pub(crate) name: ProposedName,
     pub(crate) blocked: bool,
@@ -42,6 +64,15 @@ pub(crate) fn analyze_folder(
     root: &Path,
     preview: bool,
 ) -> io::Result<Analysis> {
+    analyze_with_observations(source, root, preview, None).map(|(analysis, _)| analysis)
+}
+
+fn analyze_with_observations(
+    source: &impl MediaSource,
+    root: &Path,
+    preview: bool,
+    observer: Option<&dyn RenameSource>,
+) -> io::Result<(Analysis, HashMap<PathBuf, apply::SourceEvidence>)> {
     let mut inventory = source.inventory(root, preview)?;
     inventory.files.sort_unstable();
 
@@ -51,13 +82,16 @@ pub(crate) fn analyze_folder(
     };
     let mut representatives: HashMap<Fingerprint, Vec<PathBuf>> = HashMap::new();
     let mut dated = Vec::new();
+    let mut observations = HashMap::new();
     for path in inventory.files {
         let Some(format) = MediaFormat::classify(path.extension()) else {
             continue;
         };
-        let bucket = representatives
-            .entry(source.fingerprint(&path)?)
-            .or_default();
+        let before = observer
+            .map(|observer| observer.observe_source(root, &path))
+            .transpose()?;
+        let fingerprint = source.fingerprint(&path)?;
+        let bucket = representatives.entry(fingerprint).or_default();
         let mut duplicate = false;
         for other in bucket.iter() {
             if source.contents_equal(other, &path)? {
@@ -68,6 +102,22 @@ pub(crate) fn analyze_folder(
         report.record(&format, duplicate);
         if preview {
             let timestamp = source.capture_timestamp(&path)?;
+            if let Some((observer, observation)) = observer.zip(before) {
+                if observer.observe_source(root, &path)? != observation {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Source changed during analysis: {path:?}"),
+                    ));
+                }
+                observations.insert(
+                    path.clone(),
+                    apply::SourceEvidence {
+                        observation,
+                        fingerprint,
+                        timestamp,
+                    },
+                );
+            }
             dated.push(DatedMedia {
                 path: path.clone(),
                 timestamp,
@@ -87,7 +137,7 @@ pub(crate) fn analyze_folder(
     } else {
         None
     };
-    Ok(Analysis { report, preview })
+    Ok((Analysis { report, preview }, observations))
 }
 
 fn mark_conflicts(
@@ -247,3 +297,5 @@ mod tests {
         assert!(!rows[0].blocked);
     }
 }
+
+pub(crate) mod apply;

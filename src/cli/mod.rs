@@ -1,4 +1,4 @@
-use crate::application::{self, MediaSource, PreviewRow};
+use crate::application::{self, MediaSource, PreviewRow, RenameSource, apply};
 use crate::domain::{AnalysisReport, MediaCounts};
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -7,13 +7,16 @@ use std::process::ExitCode;
 
 pub(crate) fn run(
     mut arguments: impl Iterator<Item = OsString>,
-    source: &impl MediaSource,
+    source: &(impl MediaSource + RenameSource),
 ) -> ExitCode {
     let mut first = arguments.next();
+    let apply = first
+        .as_deref()
+        .is_some_and(|argument| argument == "--apply");
     let preview = first
         .as_deref()
         .is_some_and(|argument| argument == "--preview");
-    if preview {
+    if preview || apply {
         first = arguments.next();
     }
     let positional = if first.as_deref().is_some_and(|argument| argument == "--") {
@@ -23,12 +26,12 @@ pub(crate) fn run(
         Some(path)
     } else {
         match first.as_deref().and_then(|argument| argument.to_str()) {
-            Some("--version" | "-V") if !preview && arguments.next().is_none() => {
+            Some("--version" | "-V") if !preview && !apply && arguments.next().is_none() => {
                 println!("media-organizer {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
-            Some("--help" | "-h") if !preview && arguments.next().is_none() => {
-                println!("Usage: media-organizer [--preview] [[--] <folder>]");
+            Some("--help" | "-h") if !preview && !apply && arguments.next().is_none() => {
+                println!("Usage: media-organizer [--preview | --apply] [[--] <folder>]");
                 println!("       media-organizer --help | --version");
                 return ExitCode::SUCCESS;
             }
@@ -60,6 +63,10 @@ pub(crate) fn run(
         }
     };
 
+    if apply {
+        return apply_folder(source, &folder);
+    }
+
     match application::analyze_folder(source, &folder, preview) {
         Ok(analysis) => {
             print_report(&analysis.report);
@@ -75,12 +82,81 @@ pub(crate) fn run(
     }
 }
 
-fn prompt_folder() -> io::Result<Option<PathBuf>> {
-    {
-        let mut output = io::stdout().lock();
-        write!(output, "Folder path: ")?;
-        output.flush()?;
+fn apply_folder(source: &(impl MediaSource + RenameSource), folder: &Path) -> ExitCode {
+    let plan = match apply::prepare_apply(source, folder) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("Analysis failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    print_report(&plan.report);
+    print_preview(&plan.root, &plan.rows);
+    if plan.rows.iter().any(|row| row.blocked) {
+        eprintln!("Cannot apply: the preview has occupied destinations.");
+        return ExitCode::FAILURE;
     }
+    if plan
+        .rows
+        .iter()
+        .all(|row| row.name.source == row.name.destination)
+    {
+        println!("No files need renaming.");
+        return ExitCode::SUCCESS;
+    }
+
+    match confirm_apply() {
+        Ok(false) => {
+            println!("Cancelled. No files were renamed.");
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => {
+            eprintln!("Could not read confirmation: {error}");
+            return ExitCode::FAILURE;
+        }
+        Ok(true) => {}
+    }
+    if let Err(error) = apply::revalidate(source, folder, &plan) {
+        eprintln!("Cannot apply: {error}");
+        return ExitCode::FAILURE;
+    }
+    match apply::execute(source, &plan) {
+        Ok(count) => {
+            println!("Renamed {count} media files.");
+            ExitCode::SUCCESS
+        }
+        Err(failure) => {
+            eprintln!("Rename failed: {}", failure.trigger);
+            if failure.recovery.is_empty() {
+                eprintln!("Any files moved by this operation were restored.");
+            }
+            for entry in failure.recovery {
+                eprintln!(
+                    "Manual recovery needed for {:?}. Last known location (unverified): {:?}. {}",
+                    entry.original, entry.last_known, entry.error
+                );
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn confirm_apply() -> io::Result<bool> {
+    write_prompt("Type yes and press Enter to apply these renames: ")?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.as_str(), "yes\n" | "yes\r\n"))
+}
+
+fn write_prompt(prompt: &str) -> io::Result<()> {
+    let mut output = io::stdout().lock();
+    write!(output, "{prompt}")?;
+    output.flush()
+}
+
+fn prompt_folder() -> io::Result<Option<PathBuf>> {
+    write_prompt("Folder path: ")?;
 
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;

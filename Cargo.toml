@@ -12,3 +12,4 @@ unsafe_code = "forbid"
 
 [dependencies]
 nom-exif = "=3.8.0"
+renamest = "=0.1.3"

@@ -9,7 +9,7 @@ This project is managed by **AI Workflow**. These instructions apply to every AI
 
 ## Project
 - Summary: Media Organizer is a free, open-source interactive CLI for people who organize personal photo and video collections on Linux, Windows, and macOS. It previews changes before applying chronological renaming and offers optional duplicate removal and subfolder flattening. The rewrite uses a different language, preserves the behavior documented in the original README, and is invoked as media-organizer.
-- Stack: Rust/Cargo 1.100.0, Crossterm 0.29.0 and nom-exif 3.8.0.
+- Stack: Rust/Cargo 1.100.0, Crossterm 0.29.0, nom-exif 3.8.0 and renamest 0.1.3.
 - Architecture: Layered modular monolith
 - User language: pt-BR (talk to the user and write business docs in it; code and technical docs in English)
 

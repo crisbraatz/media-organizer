@@ -237,3 +237,116 @@ fn preview_flags_dangling_child_link_as_occupied() {
     assert!(text.contains("\"photo.jpg\" -> \"1.jpg\" [blocked]"));
     assert!(destination.symlink_metadata().unwrap().is_symlink());
 }
+
+#[test]
+fn apply_requires_a_complete_yes_and_only_changes_names() {
+    use std::fs;
+
+    let root = Scratch::new();
+    let subfolder = root.0.join("nested");
+    fs::create_dir(&subfolder).unwrap();
+    let photo = root.0.join("holiday.JPG");
+    let video = subfolder.join("summer.MOV");
+    fs::write(&photo, b"photo").unwrap();
+    fs::write(&video, b"video").unwrap();
+
+    for answer in ["", "yes", "\n", "no\n"] {
+        let mut cmd = command();
+        cmd.arg("--apply").arg(&root.0);
+        let cancelled = prompt_with(cmd, answer);
+        assert!(cancelled.status.success(), "{:?}", cancelled.stderr);
+        let output = String::from_utf8(cancelled.stdout).unwrap();
+        assert!(output.contains("Rename preview") && output.contains("Cancelled"));
+        assert_eq!(fs::read(&photo).unwrap(), b"photo");
+        assert_eq!(fs::read(&video).unwrap(), b"video");
+    }
+
+    let mut cmd = command();
+    cmd.args(["--apply", "--"]).arg(&root.0);
+    let applied = prompt_with(cmd, "yes\n");
+    assert!(applied.status.success(), "{:?}", applied.stderr);
+    let output = String::from_utf8(applied.stdout).unwrap();
+    assert!(output.find("Rename preview").unwrap() < output.find("Type yes").unwrap());
+    assert!(output.contains("Renamed 2 media files."));
+    assert_eq!(fs::read(root.0.join("1.JPG")).unwrap(), b"photo");
+    assert_eq!(fs::read(subfolder.join("1.MOV")).unwrap(), b"video");
+    assert!(!photo.exists());
+    assert!(!video.exists());
+    assert_eq!(fs::read_dir(&root.0).unwrap().count(), 2);
+    assert_eq!(fs::read_dir(&subfolder).unwrap().count(), 1);
+}
+
+#[test]
+fn apply_rejects_an_occupied_target_before_the_prompt() {
+    let root = Scratch::new();
+    let source = root.0.join("original.jpg");
+    let destination = root.0.join("1.jpg");
+    std::fs::write(&source, b"photo").unwrap();
+    std::fs::create_dir(&destination).unwrap();
+
+    let output = command().arg("--apply").arg(&root.0).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let report = String::from_utf8(output.stdout).unwrap();
+    assert!(report.contains("[blocked]"));
+    assert!(!report.contains("Type yes"));
+    assert!(destination.is_dir());
+    assert_eq!(std::fs::read(&source).unwrap(), b"photo");
+}
+
+#[test]
+fn apply_revalidates_after_waiting_for_confirmation() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::Stdio;
+
+    let root = Scratch::new();
+    let photo = root.0.join("original.jpg");
+    std::fs::write(&photo, b"photo").unwrap();
+    let mut child = command()
+        .arg("--apply")
+        .arg(&root.0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("Rename preview:") {
+        line.clear();
+        assert_ne!(output.read_line(&mut line).unwrap(), 0);
+    }
+    line.clear();
+    output.read_line(&mut line).unwrap();
+    assert!(line.contains("original.jpg"));
+    let mut prompt = [0; 8];
+    output.read_exact(&mut prompt).unwrap();
+    assert_eq!(&prompt, b"Type yes");
+
+    std::fs::write(&photo, b"changed externally").unwrap();
+    child.stdin.take().unwrap().write_all(b"yes\n").unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("changed after the preview")
+    );
+    assert_eq!(std::fs::read(photo).unwrap(), b"changed externally");
+    assert!(!root.0.join("1.jpg").exists());
+}
+
+#[test]
+fn apply_noop_and_flags_have_clear_outcomes() {
+    let root = Scratch::new();
+    std::fs::write(root.0.join("1.jpg"), b"photo").unwrap();
+    let output = command().arg("--apply").arg(&root.0).output().unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("No files need renaming.") && !text.contains("Type yes"));
+
+    let help = command().arg("--help").output().unwrap();
+    assert!(String::from_utf8(help.stdout).unwrap().contains("--apply"));
+    let invalid = command().args(["--preview", "--apply"]).output().unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+}

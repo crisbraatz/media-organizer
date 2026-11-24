@@ -163,7 +163,7 @@ fn read_block(reader: &mut impl Read, mut remaining: &mut [u8]) -> io::Result<us
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::application::analyze_folder;
     use crate::domain::MediaCounts;
@@ -171,10 +171,10 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct Scratch(PathBuf);
+    pub(crate) struct Scratch(pub(crate) PathBuf);
 
     impl Scratch {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let dir = std::env::temp_dir().join(format!(
                 "media-organizer-{}-{}",
@@ -285,3 +285,5 @@ mod tests {
 }
 
 pub(crate) mod capture_time;
+
+mod rename;
