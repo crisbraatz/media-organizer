@@ -1,6 +1,90 @@
-# media-organizer
+# Media Organizer
 
-A local command-line tool for organizing personal photo and video collections. See the [product overview](docs/business/overview.md) and [architecture](docs/architecture.md) for details.
+Organize photos and videos by capture time from your terminal. Review the plan before applying it, with optional duplicate removal and subfolder consolidation.
+
+[Downloads](https://github.com/crisbraatz/media-organizer/releases) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
+
+## What it does
+
+- Counts photos, videos, subfolders and duplicates in a folder tree.
+- Proposes chronological filenames and flags occupied destinations before you apply changes.
+- Compares duplicate files byte for byte. You can keep all copies or retain one from each group.
+- Keeps files in their existing folders by default. You can bring the surviving media into a single chronological sequence in the selected folder.
+- Processes media and metadata locally.
+
+## Quick start
+
+After installing, try the guided terminal flow with `media-organizer` or inspect a read-only preview:
+
+```sh
+media-organizer --preview "/path/to/photos"
+```
+
+Use a copy of a small folder for your first apply. Applying renames changes filenames. If you choose duplicate removal, the listed copies are deleted permanently.
+
+## Install a release
+
+Download your archive and the matching `SHA256SUMS` from the same [GitHub release](https://github.com/crisbraatz/media-organizer/releases). The executable runs without Rust. Replace `<version>` with the version shown on the release, such as `1.0.0`.
+
+| Platform | Archive |
+| --- | --- |
+| Linux x64 | `media-organizer-<version>-linux-x64.tar.gz` |
+| Windows x64 | `media-organizer-<version>-windows-x64.zip` |
+| macOS Intel | `media-organizer-<version>-macos-x64.tar.gz` |
+| macOS Apple Silicon | `media-organizer-<version>-macos-arm64.tar.gz` |
+
+The Linux executable is statically linked with musl. Each archive includes the project license and third-party notices.
+
+### Linux and macOS
+
+In the download directory, set `archive` to the filename for your system and verify its checksum. Proceed only if the check reports `OK`.
+
+```sh
+archive=media-organizer-1.0.0-linux-x64.tar.gz
+awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 -c -
+```
+
+Use `sha256sum -c -` in place of `shasum -a 256 -c -` if your Linux system has `sha256sum`.
+
+```sh
+package_dir="$(mktemp -d)"
+tar -xzf "$archive" -C "$package_dir"
+"$package_dir/media-organizer" --version
+mkdir -p "$HOME/.local/bin"
+install -m 755 "$package_dir/media-organizer" "$HOME/.local/bin/media-organizer"
+```
+
+Add `$HOME/.local/bin` to your shell's `PATH` if needed.
+
+### Windows
+
+In PowerShell, set the zip filename and verify its SHA-256 hash before extracting it:
+
+```powershell
+$archive = 'media-organizer-1.0.0-windows-x64.zip'
+$matching = @(Get-Content SHA256SUMS | Where-Object { $_.EndsWith("  $archive") })
+if ($matching.Count -ne 1) { throw 'Expected one checksum for this archive.' }
+$expected = ($matching[0] -split '\s+', 2)[0]
+if ((Get-FileHash -Algorithm SHA256 $archive).Hash -ne $expected) {
+    throw 'Checksum mismatch.'
+}
+Expand-Archive $archive -DestinationPath .\media-organizer
+.\media-organizer\media-organizer.exe --version
+```
+
+Keep the executable in a folder on your user `Path` to run it by name from other directories.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `media-organizer` | Opens the guided flow in an interactive terminal. |
+| `media-organizer "<folder>"` | Analyzes the folder tree without changing it. |
+| `media-organizer --preview "<folder>"` | Displays the proposed names and direct conflicts. |
+| `media-organizer --apply "<folder>"` | Displays the plan and applies it after you type `yes` and press Enter. |
+| `--remove-duplicates` | Adds duplicate removal to preview or apply. |
+| `--flatten` | Adds a root-level sequence to preview or apply. |
+| `media-organizer --help` / `--version` | Prints usage or the installed version. |
 
 ## Organize interactively
 
@@ -58,21 +142,21 @@ a filesystem boundary that cannot support a native exclusive rename, the command
 attempts to restore the original names. If empty-subfolder cleanup fails after the file changes,
 the command reports the cleanup errors and leaves the completed file changes in place.
 
-## Develop locally
+## Build from source
 
 Install Rust with [rustup](https://rustup.rs/). The repository pins the toolchain and formatting and linting components.
 
 ```sh
-cargo fetch --locked
-cargo run --locked -- --help
-cargo fmt --all -- --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
 cargo build --locked --release
+cargo run --locked -- --help
 ```
 
-## Distribution
+The executable is under `target/release/`. See the [contribution guide](CONTRIBUTING.md) for the full checks and the [architecture](docs/architecture.md) for the release workflow. For a container smoke test, use `docker compose run --rm --build media-organizer` or build and run the image with Podman.
 
-Build with `cargo build --locked --release` on the target platform. The executable is under `target/release/` and can be placed on the user's path. Native releases will be distributed through GitHub Releases.
+## Contributing and security
 
-For a local container smoke test, run `docker compose run --rm --build media-organizer` or `podman build -t media-organizer .` followed by `podman run --rm media-organizer`.
+Read the [contribution guide](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md) before opening a contribution. Follow the [security policy](SECURITY.md) to report vulnerabilities privately. The [product overview](docs/business/overview.md) describes the project goals.
+
+## License
+
+[MIT](LICENSE). Release archives include dependency and Rust toolchain notices in `third-party-notices/`.

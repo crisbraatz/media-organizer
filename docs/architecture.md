@@ -32,7 +32,20 @@ Use Cargo unit tests for domain rules, temporary directories for filesystem beha
 
 ## Distribution
 
-Publish native executables through GitHub Releases. The container build is available for local verification and has no exposed ports.
+The [Release workflow](../.github/workflows/release.yml) builds native archives for Linux x64, Windows x64, macOS Intel and macOS Apple Silicon. The Linux target uses static musl. Each native runner smoke-tests the extracted executable against the Cargo version. Packages ship with the project license, dependency notices and Rust standard-library notices.
+
+1. Set the release version in `Cargo.toml` and update the matching package entry in `Cargo.lock`. Land the reviewed change on `main`.
+2. Run the Release workflow manually from the intended version commit on `main`. A manual run assembles the four archives and `SHA256SUMS` in the `verified-release` Actions artifact.
+3. After the verification run passes, push an annotated `v<version>` tag at the reviewed commit when publication has been authorized. For example, for the 1.0.0 commit:
+
+   ```sh
+   git tag -a v1.0.0 -m "Release v1.0.0"
+   git push origin v1.0.0
+   ```
+
+Only a tag run can publish. The tag must match the Cargo version. The publication job verifies the complete asset set and checksums before GitHub CLI uploads the archives through a draft and publishes them. Confirm the published release has all four archives and `SHA256SUMS`. If a draft exists after failure, inspect the assets and logs before retrying.
+
+The container build is available for local verification and has no exposed ports.
 
 ## ADR-001 — Initial stack and architecture
 
