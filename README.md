@@ -32,6 +32,19 @@ Duplicates are checked byte for byte across the selected folder and its subfolde
 
 The command stages duplicate copies until every survivor rename succeeds. Before deleting each staged copy, it confirms that the keeper still matches. If cleanup fails, completed survivor renames stay in place. The command lists the copies already removed and the last known staged paths of the remaining copies.
 
+## Organize media into the selected folder
+
+Add `--flatten` to `--preview` to inspect one chronological sequence for the media in the
+selected folder and its subfolders. Add it to `--apply` to move media to the selected folder
+after reviewing and confirming the plan. Combine it with `--remove-duplicates` to number only
+retained media.
+
+After all file changes succeed, the command removes affected subfolders that became empty.
+Unrelated empty folders and folders containing other entries stay in place. If a move crosses
+a filesystem boundary that cannot support a native exclusive rename, the command stops and
+attempts to restore the original names. If empty-subfolder cleanup fails after the file changes,
+the command reports the cleanup errors and leaves the completed file changes in place.
+
 ## Develop locally
 
 Install Rust with [rustup](https://rustup.rs/). The repository pins the toolchain and formatting and linting components.

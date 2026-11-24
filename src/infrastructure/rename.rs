@@ -1,6 +1,7 @@
 use super::{LocalMediaSource, is_link_or_reparse_point, path_error};
 use crate::application::{
-    DuplicateRemoval, MediaSource, RenameSource, SourceObservation, StagedCopy,
+    DirectoryObservation, DuplicateRemoval, MediaSource, RenameSource, SourceObservation,
+    StagedCopy,
 };
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -23,26 +24,7 @@ impl RenameSource for LocalMediaSource {
     }
 
     fn observe_source(&self, root: &Path, source: &Path) -> io::Result<SourceObservation> {
-        let parent = source
-            .parent()
-            .filter(|_| source.file_name().is_some())
-            .filter(|parent| root.is_absolute() && parent.starts_with(root))
-            .ok_or_else(|| {
-                path_error(
-                    "access within the selected folder",
-                    source,
-                    ErrorKind::InvalidInput.into(),
-                )
-            })?;
-        let resolved = fs::canonicalize(parent)
-            .map_err(|error| path_error("resolve parent folder", parent, error))?;
-        if resolved != parent || !checked_metadata(parent)?.is_dir() {
-            return Err(path_error(
-                "use changed parent folder",
-                parent,
-                ErrorKind::InvalidInput.into(),
-            ));
-        }
+        check_parent(root, source)?;
 
         let metadata = checked_metadata(source)?;
         if !metadata.is_file() {
@@ -64,6 +46,66 @@ impl RenameSource for LocalMediaSource {
         })
     }
 
+    fn observe_directory(&self, root: &Path, directory: &Path) -> io::Result<DirectoryObservation> {
+        if directory == root {
+            return Err(path_error(
+                "inspect as a subfolder",
+                directory,
+                ErrorKind::InvalidInput.into(),
+            ));
+        }
+        check_parent(root, directory)?;
+        let metadata = checked_metadata(directory)?;
+        if !metadata.is_dir() {
+            return Err(path_error(
+                "inspect as a subfolder",
+                directory,
+                ErrorKind::NotADirectory.into(),
+            ));
+        }
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        Ok(DirectoryObservation {
+            #[cfg(unix)]
+            device_inode: (metadata.dev(), metadata.ino()),
+            #[cfg(not(unix))]
+            created: optional_time(metadata.created(), directory)?,
+        })
+    }
+
+    fn remove_empty_directory(
+        &self,
+        root: &Path,
+        directory: &Path,
+        observation: &DirectoryObservation,
+    ) -> io::Result<bool> {
+        match self.observe_directory(root, directory) {
+            Ok(current) if current == *observation => {}
+            Ok(_) => {
+                return Err(path_error(
+                    "remove changed subfolder",
+                    directory,
+                    ErrorKind::InvalidData.into(),
+                ));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        match fs::remove_dir(directory) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(path_error("remove empty subfolder", directory, error)),
+        }
+    }
+
     fn move_exclusive(
         &self,
         root: &Path,
@@ -71,13 +113,7 @@ impl RenameSource for LocalMediaSource {
         destination: &Path,
         observation: &SourceObservation,
     ) -> io::Result<()> {
-        if source.parent() != destination.parent() || destination.file_name().is_none() {
-            return Err(path_error(
-                "use as a sibling destination",
-                destination,
-                ErrorKind::InvalidInput.into(),
-            ));
-        }
+        check_parent(root, destination)?;
         if !matches_for_move(&self.observe_source(root, source)?, observation) {
             return Err(path_error(
                 "move changed source",
@@ -147,6 +183,30 @@ fn matches_for_move(live: &SourceObservation, reviewed: &SourceObservation) -> b
     }
 }
 
+fn check_parent(root: &Path, child: &Path) -> io::Result<()> {
+    let parent = child
+        .parent()
+        .filter(|_| child.file_name().is_some())
+        .filter(|parent| root.is_absolute() && parent.starts_with(root))
+        .ok_or_else(|| {
+            path_error(
+                "access within the selected folder",
+                child,
+                ErrorKind::InvalidInput.into(),
+            )
+        })?;
+    let resolved = fs::canonicalize(parent)
+        .map_err(|error| path_error("resolve parent folder", parent, error))?;
+    if resolved != parent || !checked_metadata(parent)?.is_dir() {
+        return Err(path_error(
+            "use changed parent folder",
+            parent,
+            ErrorKind::InvalidInput.into(),
+        ));
+    }
+    Ok(())
+}
+
 fn checked_metadata(path: &Path) -> io::Result<fs::Metadata> {
     let metadata =
         fs::symlink_metadata(path).map_err(|error| path_error("inspect", path, error))?;
@@ -172,6 +232,58 @@ fn optional_time(result: io::Result<SystemTime>, path: &Path) -> io::Result<Opti
 mod tests {
     use super::*;
     use crate::infrastructure::{LocalMediaSource, tests::Scratch};
+
+    #[test]
+    fn permits_confined_cross_parent_moves_without_overwrite() {
+        let scratch = Scratch::new();
+        let source_fs = LocalMediaSource;
+        let root = source_fs.canonical_root(&scratch.0).unwrap();
+        let nested = root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let source = nested.join("image.jpg");
+        let occupied = root.join("occupied.jpg");
+        let destination = root.join("1.jpg");
+        fs::write(&source, b"original").unwrap();
+        fs::write(&occupied, b"occupant").unwrap();
+        let observation = source_fs.observe_source(&root, &source).unwrap();
+
+        assert!(
+            source_fs
+                .move_exclusive(&root, &source, &occupied, &observation)
+                .is_err()
+        );
+        assert_eq!(fs::read(&occupied).unwrap(), b"occupant");
+        source_fs
+            .move_exclusive(&root, &source, &destination, &observation)
+            .unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+        source_fs
+            .move_exclusive(&root, &destination, &source, &observation)
+            .unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"original");
+        assert!(!destination.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_destination_below_a_linked_parent() {
+        let scratch = Scratch::new();
+        let outside = Scratch::new();
+        let source_fs = LocalMediaSource;
+        let root = source_fs.canonical_root(&scratch.0).unwrap();
+        let source = root.join("image.jpg");
+        let linked = root.join("linked");
+        fs::write(&source, b"original").unwrap();
+        std::os::unix::fs::symlink(&outside.0, &linked).unwrap();
+        let observation = source_fs.observe_source(&root, &source).unwrap();
+        assert!(
+            source_fs
+                .move_exclusive(&root, &source, &linked.join("1.jpg"), &observation)
+                .is_err()
+        );
+        assert!(!outside.0.join("1.jpg").exists());
+        assert_eq!(fs::read(&source).unwrap(), b"original");
+    }
 
     #[test]
     fn refuses_cleanup_if_reviewed_entries_have_different_bytes() {

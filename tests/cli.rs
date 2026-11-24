@@ -413,3 +413,73 @@ fn remove_duplicates_requires_exactly_one_explicit_mode() {
     assert!(output.status.success());
     assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 2);
 }
+
+#[test]
+fn flatten_preview_cancel_and_apply_compose_with_duplicate_removal() {
+    use std::fs;
+
+    let root = Scratch::new();
+    let empty_after = root.0.join("a/deep");
+    let occupied_after = root.0.join("b");
+    fs::create_dir_all(&empty_after).unwrap();
+    fs::create_dir(&occupied_after).unwrap();
+    fs::create_dir(root.0.join("unrelated")).unwrap();
+    fs::write(empty_after.join("keep.JPG"), b"same").unwrap();
+    fs::write(occupied_after.join("copy.JPG"), b"same").unwrap();
+    fs::write(occupied_after.join("extra.MOV"), b"extra").unwrap();
+    fs::write(occupied_after.join("notes.txt"), b"notes").unwrap();
+
+    let preview = command()
+        .args(["--flatten", "--preview", "--remove-duplicates", "--"])
+        .arg(&root.0)
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{:?}", preview.stderr);
+    let text = String::from_utf8(preview.stdout).unwrap();
+    assert!(text.contains("keep.JPG") && text.contains("copy.JPG"));
+    assert!(empty_after.join("keep.JPG").exists());
+
+    let run = |answer| {
+        let mut cmd = command();
+        cmd.args(["--remove-duplicates", "--apply", "--flatten"])
+            .arg(&root.0);
+        prompt_with(cmd, answer)
+    };
+    let cancelled = run("yes");
+    assert!(cancelled.status.success());
+    assert!(
+        String::from_utf8(cancelled.stdout)
+            .unwrap()
+            .contains("Cancelled")
+    );
+    assert!(empty_after.join("keep.JPG").exists());
+
+    let applied = run("yes\n");
+    assert!(applied.status.success(), "{:?}", applied.stderr);
+    let text = String::from_utf8(applied.stdout).unwrap();
+    assert!(text.contains("Removed 1 duplicate") && text.contains("Removed 2 empty subfolders"));
+    assert!(!root.0.join("a").exists());
+    assert!(!occupied_after.join("copy.JPG").exists());
+    assert_eq!(
+        fs::read(occupied_after.join("notes.txt")).unwrap(),
+        b"notes"
+    );
+    assert!(root.0.join("unrelated").is_dir());
+    let media = ["1.JPG", "2.JPG", "1.MOV", "2.MOV"]
+        .iter()
+        .filter_map(|name| fs::read(root.0.join(name)).ok())
+        .collect::<Vec<_>>();
+    assert_eq!(media.len(), 2);
+    assert!(media.contains(&b"same".to_vec()) && media.contains(&b"extra".to_vec()));
+
+    assert_eq!(
+        command()
+            .arg("--flatten")
+            .arg(&root.0)
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+}

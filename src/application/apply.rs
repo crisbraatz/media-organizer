@@ -1,11 +1,12 @@
 //! Prepare and revalidate the exact plan reviewed before execution.
 
 use super::{
-    DuplicateCopy, DuplicateRemoval, Fingerprint, MediaSource, PreviewRow, RenameSource,
-    SourceObservation, StagedCopy, analyze_with_observations,
+    DirectoryObservation, DuplicateCopy, DuplicateRemoval, Fingerprint, MediaSource,
+    OrganizationOptions, PreviewRow, RenameSource, SourceObservation, StagedCopy,
+    analyze_with_observations,
 };
 use crate::domain::AnalysisReport;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -22,24 +23,55 @@ pub(crate) struct PreparedApply {
     pub(crate) report: AnalysisReport,
     pub(crate) rows: Vec<PreviewRow>,
     pub(crate) duplicates: Vec<DuplicateCopy>,
-    remove_duplicates: bool,
+    options: OrganizationOptions,
+    directories: Vec<(PathBuf, DirectoryObservation)>,
     sources: HashMap<PathBuf, SourceEvidence>,
 }
 
 pub(crate) fn prepare_apply(
     source: &(impl MediaSource + RenameSource),
     selected_root: &Path,
-    remove_duplicates: bool,
+    options: OrganizationOptions,
 ) -> io::Result<PreparedApply> {
     let root = source.canonical_root(selected_root)?;
     let (analysis, sources) =
-        analyze_with_observations(source, &root, true, remove_duplicates, Some(source))?;
+        analyze_with_observations(source, &root, true, options, Some(source))?;
+    let rows = analysis.preview.unwrap_or_default();
+    let directories = if options.flatten {
+        let mut candidates: Vec<_> = rows
+            .iter()
+            .filter(|row| row.name.source.parent() != row.name.destination.parent())
+            .map(|row| row.name.source.as_path())
+            .chain(analysis.duplicates.iter().map(|copy| copy.copy.as_path()))
+            .flat_map(|path| {
+                path.ancestors()
+                    .skip(1)
+                    .take_while(|parent| *parent != root && parent.starts_with(&root))
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        candidates.sort_unstable_by(|left, right| {
+            right
+                .components()
+                .count()
+                .cmp(&left.components().count())
+                .then_with(|| left.cmp(right))
+        });
+        candidates
+            .into_iter()
+            .map(|path| Ok((path.to_path_buf(), source.observe_directory(&root, path)?)))
+            .collect::<io::Result<_>>()?
+    } else {
+        Vec::new()
+    };
     Ok(PreparedApply {
         root,
         report: analysis.report,
-        rows: analysis.preview.unwrap_or_default(),
+        rows,
         duplicates: analysis.duplicates,
-        remove_duplicates,
+        options,
+        directories,
         sources,
     })
 }
@@ -55,11 +87,12 @@ pub(crate) fn revalidate(
             "Cannot apply a plan with occupied destinations",
         ));
     }
-    let current = prepare_apply(source, selected_root, approved.remove_duplicates)?;
+    let current = prepare_apply(source, selected_root, approved.options)?;
     if current.root != approved.root
         || current.rows != approved.rows
         || current.duplicates != approved.duplicates
         || current.sources != approved.sources
+        || current.directories != approved.directories
     {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
@@ -150,6 +183,8 @@ fn finish_renames<'a>(
 pub(crate) struct ApplySummary {
     pub(crate) renamed: usize,
     pub(crate) removed: usize,
+    pub(crate) directories_removed: usize,
+    pub(crate) directory_errors: Vec<io::Error>,
 }
 
 #[derive(Debug)]
@@ -196,10 +231,19 @@ pub(crate) fn execute(
         }
         removed.push(movement.original.to_path_buf());
     }
-    Ok(ApplySummary {
+    let mut summary = ApplySummary {
         renamed,
         removed: removed.len(),
-    })
+        directories_removed: 0,
+        directory_errors: Vec::new(),
+    };
+    for (path, observation) in &approved.directories {
+        match source.remove_empty_directory(&approved.root, path, observation) {
+            Ok(removed) => summary.directories_removed += usize::from(removed),
+            Err(error) => summary.directory_errors.push(error),
+        }
+    }
+    Ok(summary)
 }
 
 fn stage_path(original: &Path, index: usize, attempt: u8) -> PathBuf {
@@ -293,6 +337,38 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn flatten_removes_affected_empty_ancestors_but_preserves_occupied_and_unrelated_directories() {
+        let scratch = Scratch::new();
+        let deep = scratch.0.join("affected/deep");
+        let occupied = scratch.0.join("occupied");
+        let unrelated = scratch.0.join("unrelated");
+        fs::create_dir_all(&deep).unwrap();
+        fs::create_dir(&occupied).unwrap();
+        fs::create_dir(&unrelated).unwrap();
+        fs::write(deep.join("a.JPG"), b"orig a").unwrap();
+        fs::write(occupied.join("b.MOV"), b"orig b").unwrap();
+        let options = OrganizationOptions {
+            flatten: true,
+            ..OrganizationOptions::default()
+        };
+        let plan = prepare_apply(&LocalMediaSource, &scratch.0, options).unwrap();
+        fs::write(occupied.join("new.txt"), b"new occupant").unwrap();
+        revalidate(&LocalMediaSource, &scratch.0, &plan).unwrap();
+        let result = execute(&LocalMediaSource, &plan).unwrap();
+        assert_eq!(result.renamed, 2);
+        assert!(!scratch.0.join("affected").exists());
+        assert_eq!(fs::read(occupied.join("new.txt")).unwrap(), b"new occupant");
+        assert!(unrelated.is_dir());
+        let contents: Vec<_> = plan
+            .rows
+            .iter()
+            .map(|row| fs::read(&row.name.destination).unwrap())
+            .collect();
+        assert!(contents.contains(&b"orig a".to_vec()));
+        assert!(contents.contains(&b"orig b".to_vec()));
+    }
+
+    #[test]
     fn cleanup_uses_the_keeper_final_path() {
         let scratch = Scratch::new();
         let incoming = scratch.0.join("a");
@@ -302,7 +378,15 @@ mod tests {
         fs::write(scratch.0.join("other.JPG"), b"same").unwrap();
         fs::write(scratch.0.join("1.JPG"), b"diff").unwrap();
 
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, true).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions {
+                remove_duplicates: true,
+                ..OrganizationOptions::default()
+            },
+        )
+        .unwrap();
         let result = execute(&LocalMediaSource, &plan).unwrap();
         assert_eq!(result.renamed, 1);
         assert_eq!(result.removed, 2);
@@ -321,7 +405,15 @@ mod tests {
         fs::hard_link(earlier.join("a.JPG"), scratch.0.join("1.JPG")).unwrap();
         fs::write(scratch.0.join("survivor.JPG"), b"diff").unwrap();
 
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, true).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions {
+                remove_duplicates: true,
+                ..OrganizationOptions::default()
+            },
+        )
+        .unwrap();
         assert_eq!(plan.duplicates.len(), 1);
         let result = execute(&LocalMediaSource, &plan).unwrap();
         assert_eq!(result.renamed, 2);
@@ -341,7 +433,15 @@ mod tests {
         fs::write(z.join("1.jpg"), b"same").unwrap();
         fs::write(z.join("other.jpg"), b"diff").unwrap();
 
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, true).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions {
+                remove_duplicates: true,
+                ..OrganizationOptions::default()
+            },
+        )
+        .unwrap();
         let root = &plan.root;
         assert_eq!(plan.report.total().files, 3);
         assert_eq!(plan.report.total().duplicates, 1);
@@ -360,7 +460,12 @@ mod tests {
         let scratch = Scratch::new();
         let image = scratch.0.join("holiday.JPG");
         fs::write(&image, b"original").unwrap();
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, false).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions::default(),
+        )
+        .unwrap();
         assert_eq!(plan.rows[0].name.destination.file_name().unwrap(), "1.JPG");
         revalidate(&LocalMediaSource, &scratch.0, &plan).unwrap();
 
@@ -376,11 +481,21 @@ mod tests {
         let image = scratch.0.join("holiday.jpg");
         let destination = scratch.0.join("1.jpg");
         fs::write(&image, b"original").unwrap();
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, false).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions::default(),
+        )
+        .unwrap();
         fs::create_dir(&destination).unwrap();
         assert!(revalidate(&LocalMediaSource, &scratch.0, &plan).is_err());
 
-        let blocked = prepare_apply(&LocalMediaSource, &scratch.0, false).unwrap();
+        let blocked = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions::default(),
+        )
+        .unwrap();
         assert!(blocked.rows[0].blocked);
         assert!(revalidate(&LocalMediaSource, &scratch.0, &blocked).is_err());
         fs::remove_dir(&destination).unwrap();
@@ -392,7 +507,12 @@ mod tests {
     fn rejects_added_media_that_would_change_the_plan() {
         let scratch = Scratch::new();
         fs::write(scratch.0.join("holiday.jpg"), b"original").unwrap();
-        let plan = prepare_apply(&LocalMediaSource, &scratch.0, false).unwrap();
+        let plan = prepare_apply(
+            &LocalMediaSource,
+            &scratch.0,
+            OrganizationOptions::default(),
+        )
+        .unwrap();
         fs::write(scratch.0.join("new.jpg"), b"newly added").unwrap();
         assert!(revalidate(&LocalMediaSource, &scratch.0, &plan).is_err());
     }
@@ -405,6 +525,7 @@ mod execution_tests {
 
     struct FakeMoves {
         files: RefCell<HashMap<PathBuf, u8>>,
+        completed_destinations: RefCell<Vec<PathBuf>>,
         failures: RefCell<Vec<(Option<PathBuf>, PathBuf)>>,
         cleanup_failure: Option<PathBuf>,
     }
@@ -416,6 +537,19 @@ mod execution_tests {
 
         fn observe_source(&self, _: &Path, _: &Path) -> io::Result<SourceObservation> {
             unreachable!()
+        }
+
+        fn observe_directory(&self, _: &Path, _: &Path) -> io::Result<DirectoryObservation> {
+            panic!("no observed directories in this synthetic plan");
+        }
+
+        fn remove_empty_directory(
+            &self,
+            _: &Path,
+            _: &Path,
+            _: &DirectoryObservation,
+        ) -> io::Result<bool> {
+            panic!("no directory cleanup in this synthetic plan");
         }
 
         fn move_exclusive(
@@ -438,6 +572,9 @@ mod execution_tests {
             }
             let bytes = files.remove(source).ok_or(ErrorKind::NotFound)?;
             files.insert(destination.to_path_buf(), bytes);
+            self.completed_destinations
+                .borrow_mut()
+                .push(destination.to_path_buf());
             Ok(())
         }
     }
@@ -519,6 +656,7 @@ mod execution_tests {
         (
             FakeMoves {
                 files: RefCell::new(files),
+                completed_destinations: RefCell::new(Vec::new()),
                 failures: RefCell::new(failures),
                 cleanup_failure: None,
             },
@@ -527,7 +665,8 @@ mod execution_tests {
                 report: AnalysisReport::default(),
                 rows,
                 duplicates: Vec::new(),
-                remove_duplicates: false,
+                options: OrganizationOptions::default(),
+                directories: Vec::new(),
                 sources,
             },
         )
@@ -594,6 +733,40 @@ mod execution_tests {
         assert_eq!(
             *adapter.files.borrow(),
             [("root/1.jpg".into(), 1), ("root/2.jpg".into(), 2)].into()
+        );
+    }
+
+    #[test]
+    fn cross_parent_finalization_collision_restores_originals_and_preserves_occupant() {
+        let (adapter, mut plan) = sample(Vec::new());
+        plan.options.flatten = true;
+        let first = plan.root.join("nested-a/first.jpg");
+        let second = plan.root.join("nested-b/second.jpg");
+        for (row, nested) in plan.rows.iter_mut().zip([&first, &second]) {
+            let evidence = plan.sources.remove(&row.name.source).unwrap();
+            plan.sources.insert(nested.clone(), evidence);
+            let bytes = adapter.files.borrow_mut().remove(&row.name.source).unwrap();
+            adapter.files.borrow_mut().insert(nested.clone(), bytes);
+            row.name.source = nested.clone();
+        }
+
+        let first_destination = plan.rows[0].name.destination.clone();
+        let occupied = plan.rows[1].name.destination.clone();
+        adapter.files.borrow_mut().insert(occupied.clone(), 9);
+        let CleanupError::Rename(error) = execute(&adapter, &plan).unwrap_err() else {
+            panic!("expected a late destination collision");
+        };
+        assert_eq!(error.trigger.kind(), ErrorKind::AlreadyExists);
+        assert!(error.recovery.is_empty());
+        assert!(
+            adapter
+                .completed_destinations
+                .borrow()
+                .contains(&first_destination)
+        );
+        assert_eq!(
+            *adapter.files.borrow(),
+            [(first, 1), (second, 2), (occupied, 9)].into()
         );
     }
 

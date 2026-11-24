@@ -26,6 +26,8 @@ updated: 2026-11-24
 
 7. Ao escolher remover duplicatas, preserve o primeiro caminho de cada grupo confirmado byte a byte. Conte apenas as mídias mantidas na numeração. As cópias são excluídas permanentemente após a renomeação, com confirmação e nova comparação de conteúdo (funcionalidade 004).
 
+8. Quando a pessoa escolhe reunir subpastas, as mídias mantidas formam uma sequência na pasta principal. A limpeza remove apenas subpastas afetadas e vazias depois que as operações com arquivos terminam com sucesso (funcionalidade 005).
+
 ## Invariantes
 
 - A análise é apresentada antes de qualquer alteração.

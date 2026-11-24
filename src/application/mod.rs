@@ -36,9 +36,24 @@ pub(crate) struct SourceObservation {
     pub(crate) device_inode: (u64, u64),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct DirectoryObservation {
+    #[cfg(unix)]
+    pub(crate) device_inode: (u64, u64),
+    #[cfg(not(unix))]
+    pub(crate) created: Option<SystemTime>,
+}
+
 pub(crate) trait RenameSource {
     fn canonical_root(&self, root: &Path) -> io::Result<PathBuf>;
     fn observe_source(&self, root: &Path, source: &Path) -> io::Result<SourceObservation>;
+    fn observe_directory(&self, root: &Path, directory: &Path) -> io::Result<DirectoryObservation>;
+    fn remove_empty_directory(
+        &self,
+        root: &Path,
+        directory: &Path,
+        observation: &DirectoryObservation,
+    ) -> io::Result<bool>;
     fn move_exclusive(
         &self,
         root: &Path,
@@ -65,6 +80,12 @@ pub(crate) struct DuplicateCopy {
     pub(crate) keeper: PathBuf,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct OrganizationOptions {
+    pub(crate) remove_duplicates: bool,
+    pub(crate) flatten: bool,
+}
+
 pub(crate) struct Analysis {
     pub(crate) report: AnalysisReport,
     pub(crate) preview: Option<Vec<PreviewRow>>,
@@ -81,17 +102,16 @@ pub(crate) fn analyze_folder(
     source: &impl MediaSource,
     root: &Path,
     preview: bool,
-    remove_duplicates: bool,
+    options: OrganizationOptions,
 ) -> io::Result<Analysis> {
-    analyze_with_observations(source, root, preview, remove_duplicates, None)
-        .map(|(analysis, _)| analysis)
+    analyze_with_observations(source, root, preview, options, None).map(|(analysis, _)| analysis)
 }
 
 fn analyze_with_observations(
     source: &impl MediaSource,
     root: &Path,
     preview: bool,
-    remove_duplicates: bool,
+    options: OrganizationOptions,
     observer: Option<&dyn RenameSource>,
 ) -> io::Result<(Analysis, HashMap<PathBuf, apply::SourceEvidence>)> {
     let mut inventory = source.inventory(root, preview)?;
@@ -140,7 +160,7 @@ fn analyze_with_observations(
                     },
                 );
             }
-            if let Some(keeper) = keeper.filter(|_| remove_duplicates) {
+            if let Some(keeper) = keeper.filter(|_| options.remove_duplicates) {
                 duplicates.push(DuplicateCopy {
                     copy: path.clone(),
                     keeper: keeper.clone(),
@@ -160,7 +180,7 @@ fn analyze_with_observations(
     let preview = if preview {
         Some(mark_conflicts(
             source,
-            propose_names(dated),
+            propose_names(dated, options.flatten.then_some(root)),
             &inventory.entries,
             &duplicates,
         )?)
@@ -293,7 +313,13 @@ mod tests {
     #[test]
     fn report_only_does_not_read_timestamps() {
         let source = source(&["root/photo.jpg"], &["root/photo.jpg"]);
-        let analysis = analyze_folder(&source, Path::new("root"), false, false).unwrap();
+        let analysis = analyze_folder(
+            &source,
+            Path::new("root"),
+            false,
+            OrganizationOptions::default(),
+        )
+        .unwrap();
         assert_eq!(analysis.report.total().files, 1);
         assert!(analysis.preview.is_none());
         assert_eq!(source.reads.get(), 0);
@@ -316,10 +342,15 @@ mod tests {
                 "root/b/1.JPG",
             ],
         );
-        let rows = analyze_folder(&source, Path::new("root"), true, false)
-            .unwrap()
-            .preview
-            .unwrap();
+        let rows = analyze_folder(
+            &source,
+            Path::new("root"),
+            true,
+            OrganizationOptions::default(),
+        )
+        .unwrap()
+        .preview
+        .unwrap();
         assert_eq!(rows.len(), 4);
         assert!(!rows[0].blocked);
         assert!(rows[2].blocked);
@@ -328,10 +359,15 @@ mod tests {
     #[test]
     fn unchanged_source_never_blocks_itself() {
         let source = source(&["root/1.JPG"], &["root/1.JPG"]);
-        let rows = analyze_folder(&source, Path::new("root"), true, false)
-            .unwrap()
-            .preview
-            .unwrap();
+        let rows = analyze_folder(
+            &source,
+            Path::new("root"),
+            true,
+            OrganizationOptions::default(),
+        )
+        .unwrap()
+        .preview
+        .unwrap();
         assert_eq!(rows[0].name.source, rows[0].name.destination);
         assert!(!rows[0].blocked);
     }

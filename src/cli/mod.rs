@@ -1,5 +1,6 @@
 use crate::application::{
-    self, DuplicateCopy, DuplicateRemoval, MediaSource, PreviewRow, RenameSource, apply,
+    self, DuplicateCopy, DuplicateRemoval, MediaSource, OrganizationOptions, PreviewRow,
+    RenameSource, apply,
 };
 use crate::domain::{AnalysisReport, MediaCounts};
 use std::collections::HashMap;
@@ -15,17 +16,20 @@ pub(crate) fn run(
     let mut first = arguments.next();
     let mut apply = false;
     let mut preview = false;
-    let mut remove_duplicates = false;
+    let mut options = OrganizationOptions::default();
     loop {
         match first.as_deref().and_then(|argument| argument.to_str()) {
             Some("--apply") if !apply && !preview => apply = true,
             Some("--preview") if !apply && !preview => preview = true,
-            Some("--remove-duplicates") if !remove_duplicates => remove_duplicates = true,
+            Some("--remove-duplicates") if !options.remove_duplicates => {
+                options.remove_duplicates = true
+            }
+            Some("--flatten") if !options.flatten => options.flatten = true,
             _ => break,
         }
         first = arguments.next();
     }
-    if remove_duplicates && !(apply || preview) {
+    if (options.remove_duplicates || options.flatten) && !(apply || preview) {
         return usage_error();
     }
 
@@ -42,7 +46,7 @@ pub(crate) fn run(
             }
             Some("--help" | "-h") if !preview && !apply && arguments.next().is_none() => {
                 println!("Usage: media-organizer [--preview | --apply] [[--] <folder>]");
-                println!("       Add --remove-duplicates to --preview or --apply.");
+                println!("       Add --flatten or --remove-duplicates to --preview or --apply.");
                 println!("       media-organizer --help | --version");
                 return ExitCode::SUCCESS;
             }
@@ -75,15 +79,23 @@ pub(crate) fn run(
     };
 
     if apply {
-        return apply_folder(source, &folder, remove_duplicates);
+        return apply_folder(source, &folder, options);
     }
 
-    match application::analyze_folder(source, &folder, preview, remove_duplicates) {
+    match application::analyze_folder(source, &folder, preview, options) {
         Ok(analysis) => {
             print_report(&analysis.report);
             if let Some(rows) = analysis.preview {
                 print_preview(&folder, &rows);
-                print_duplicates(&folder, &rows, &analysis.duplicates, remove_duplicates);
+                print_duplicates(
+                    &folder,
+                    &rows,
+                    &analysis.duplicates,
+                    options.remove_duplicates,
+                );
+                if options.flatten {
+                    print_flatten_notice();
+                }
             }
             ExitCode::SUCCESS
         }
@@ -97,9 +109,10 @@ pub(crate) fn run(
 fn apply_folder(
     source: &(impl MediaSource + RenameSource + DuplicateRemoval),
     folder: &Path,
-    remove_duplicates: bool,
+    options: OrganizationOptions,
 ) -> ExitCode {
-    let plan = match apply::prepare_apply(source, folder, remove_duplicates) {
+    let remove_duplicates = options.remove_duplicates;
+    let plan = match apply::prepare_apply(source, folder, options) {
         Ok(plan) => plan,
         Err(error) => {
             eprintln!("Analysis failed: {error}");
@@ -110,6 +123,9 @@ fn apply_folder(
     print_report(&plan.report);
     print_preview(&plan.root, &plan.rows);
     print_duplicates(&plan.root, &plan.rows, &plan.duplicates, remove_duplicates);
+    if options.flatten {
+        print_flatten_notice();
+    }
     if plan.rows.iter().any(|row| row.blocked) {
         eprintln!("Cannot apply: the preview has occupied destinations.");
         return ExitCode::FAILURE;
@@ -127,9 +143,10 @@ fn apply_folder(
     if !plan.duplicates.is_empty() {
         println!("This will permanently delete the listed duplicate copies.");
     }
-    match confirm_apply(!plan.duplicates.is_empty()) {
+    let changes_include_more_than_renaming = options.flatten || !plan.duplicates.is_empty();
+    match confirm_apply(changes_include_more_than_renaming) {
         Ok(false) => {
-            if plan.duplicates.is_empty() {
+            if !changes_include_more_than_renaming {
                 println!("Cancelled. No files were renamed.");
             } else {
                 println!("Cancelled. No files were changed.");
@@ -151,6 +168,15 @@ fn apply_folder(
             println!("Renamed {} media files.", summary.renamed);
             if remove_duplicates {
                 println!("Removed {} duplicate files.", summary.removed);
+            }
+            if options.flatten {
+                println!("Removed {} empty subfolders.", summary.directories_removed);
+            }
+            if !summary.directory_errors.is_empty() {
+                for error in summary.directory_errors {
+                    eprintln!("Subfolder cleanup failed after applying file changes: {error}");
+                }
+                return ExitCode::FAILURE;
             }
             ExitCode::SUCCESS
         }
@@ -188,8 +214,12 @@ fn apply_folder(
     }
 }
 
-fn confirm_apply(removing_duplicates: bool) -> io::Result<bool> {
-    let prompt = if removing_duplicates {
+fn print_flatten_notice() {
+    println!("Only affected subfolders that become empty will be removed.");
+}
+
+fn confirm_apply(changes_include_more_than_renaming: bool) -> io::Result<bool> {
+    let prompt = if changes_include_more_than_renaming {
         "Type yes and press Enter to apply these changes: "
     } else {
         "Type yes and press Enter to apply these renames: "

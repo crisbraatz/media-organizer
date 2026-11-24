@@ -53,3 +53,7 @@ Preflight compares full source observations. On Windows, the per-move check omit
 ## ADR-004 — Duplicate cleanup after survivor renames
 
 Accepted. Reuse the existing exact-content groups, with the earliest native path as keeper. The preview and the reviewed plan include each copy and its keeper. Compute chronological names from the survivors and stage copies alongside changed survivors. Restore stages on rename failure. After all survivor renames succeed, check file observations and exact content against each keeper's final path before unlinking its staged copy. Stop on the first cleanup error and report removed originals and last known paths for pending copies. Keep survivor names in place once cleanup begins.
+
+## ADR-005 — Confined cross-directory moves and empty-folder cleanup
+
+Accepted. Flattening plans one root sequence after optional duplicate filtering. Keep exclusive staging beside each original and validate both parents for cross-directory finalization and recovery. An unsupported cross-filesystem move fails through the existing rollback path. After successful file operations, check the captured identity of affected ancestor subfolders where available and attempt nonrecursive removal, deepest first. Preserve occupied and unrelated directories. Directory cleanup errors are separate from file execution errors.

@@ -10,7 +10,7 @@ Fotos e vídeos de celulares, câmeras, downloads e exportações chegam com nom
 
 ## Proposta de valor
 
-O comando analisa a pasta escolhida e apresenta um resumo antes de alterar arquivos. A análise percorre todos os níveis de subpastas e mostra a quantidade de mídias e duplicatas por tipo e extensão. A opção de prévia mostra os nomes cronológicos propostos por pasta e sinaliza destinos ocupados. A opção de aplicar exige confirmação explícita e verifica o plano de novo antes de renomear. Depois da confirmação, renomeia as mídias em sequência pela data de captura, usando a data de criação do arquivo quando a data de captura não consta nos metadados. A pessoa pode optar por remover duplicatas confirmadas byte a byte, inclusive entre subpastas. A prévia identifica a cópia a remover e o arquivo que fica. Reunir mídias de subpastas na pasta principal está previsto no fluxo original.
+O comando analisa a pasta escolhida e apresenta um resumo antes de alterar arquivos. A análise percorre todos os níveis de subpastas e mostra a quantidade de mídias e duplicatas por tipo e extensão. A opção de prévia mostra os nomes cronológicos propostos por pasta e sinaliza destinos ocupados. A opção de aplicar exige confirmação explícita e verifica o plano de novo antes de renomear. Depois da confirmação, renomeia as mídias em sequência pela data de captura, usando a data de criação do arquivo quando a data de captura não consta nos metadados. A pessoa pode optar por remover duplicatas confirmadas byte a byte, inclusive entre subpastas. A prévia identifica a cópia a remover e o arquivo que fica. A opção de reunir subpastas coloca as mídias mantidas em uma sequência única na pasta principal e remove apenas as subpastas afetadas que ficam vazias.
 
 ## Modelo e papéis
 
