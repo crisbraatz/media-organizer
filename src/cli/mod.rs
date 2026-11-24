@@ -1,3 +1,7 @@
+mod interactive;
+
+mod terminal;
+
 use crate::application::{
     self, DuplicateCopy, DuplicateRemoval, MediaSource, OrganizationOptions, PreviewRow,
     RenameSource, apply,
@@ -5,7 +9,7 @@ use crate::application::{
 use crate::domain::{AnalysisReport, MediaCounts};
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -14,6 +18,9 @@ pub(crate) fn run(
     source: &(impl MediaSource + RenameSource + DuplicateRemoval),
 ) -> ExitCode {
     let mut first = arguments.next();
+    if first.is_none() && io::stdin().is_terminal() && io::stdout().is_terminal() {
+        return interactive::run(source);
+    }
     let mut apply = false;
     let mut preview = false;
     let mut options = OrganizationOptions::default();
@@ -111,7 +118,6 @@ fn apply_folder(
     folder: &Path,
     options: OrganizationOptions,
 ) -> ExitCode {
-    let remove_duplicates = options.remove_duplicates;
     let plan = match apply::prepare_apply(source, folder, options) {
         Ok(plan) => plan,
         Err(error) => {
@@ -121,21 +127,43 @@ fn apply_folder(
     };
 
     print_report(&plan.report);
+    print_plan_preview(&plan, options);
+    apply_prepared(source, folder, &plan, options, confirm_apply)
+}
+
+fn print_plan_preview(plan: &apply::PreparedApply, options: OrganizationOptions) {
     print_preview(&plan.root, &plan.rows);
-    print_duplicates(&plan.root, &plan.rows, &plan.duplicates, remove_duplicates);
+    print_duplicates(
+        &plan.root,
+        &plan.rows,
+        &plan.duplicates,
+        options.remove_duplicates,
+    );
     if options.flatten {
         print_flatten_notice();
     }
+}
+
+fn has_changes(plan: &apply::PreparedApply) -> bool {
+    !plan.duplicates.is_empty()
+        || plan
+            .rows
+            .iter()
+            .any(|row| row.name.source != row.name.destination)
+}
+
+fn apply_prepared(
+    source: &(impl MediaSource + RenameSource + DuplicateRemoval),
+    folder: &Path,
+    plan: &apply::PreparedApply,
+    options: OrganizationOptions,
+    confirm: impl FnOnce(bool) -> io::Result<bool>,
+) -> ExitCode {
     if plan.rows.iter().any(|row| row.blocked) {
         eprintln!("Cannot apply: the preview has occupied destinations.");
         return ExitCode::FAILURE;
     }
-    if plan.duplicates.is_empty()
-        && plan
-            .rows
-            .iter()
-            .all(|row| row.name.source == row.name.destination)
-    {
+    if !has_changes(plan) {
         println!("No files need renaming.");
         return ExitCode::SUCCESS;
     }
@@ -144,7 +172,7 @@ fn apply_folder(
         println!("This will permanently delete the listed duplicate copies.");
     }
     let changes_include_more_than_renaming = options.flatten || !plan.duplicates.is_empty();
-    match confirm_apply(changes_include_more_than_renaming) {
+    match confirm(changes_include_more_than_renaming) {
         Ok(false) => {
             if !changes_include_more_than_renaming {
                 println!("Cancelled. No files were renamed.");
@@ -159,14 +187,14 @@ fn apply_folder(
         }
         Ok(true) => {}
     }
-    if let Err(error) = apply::revalidate(source, folder, &plan) {
+    if let Err(error) = apply::revalidate(source, folder, plan) {
         eprintln!("Cannot apply: {error}");
         return ExitCode::FAILURE;
     }
-    match apply::execute(source, &plan) {
+    match apply::execute(source, plan) {
         Ok(summary) => {
             println!("Renamed {} media files.", summary.renamed);
-            if remove_duplicates {
+            if options.remove_duplicates {
                 println!("Removed {} duplicate files.", summary.removed);
             }
             if options.flatten {

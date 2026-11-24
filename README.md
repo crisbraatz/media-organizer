@@ -1,10 +1,21 @@
 # media-organizer
 
-A local command-line tool for organizing personal photo and video collections. The current version analyzes a selected folder and reports photos, videos, duplicates and subfolders. See the [product overview](docs/business/overview.md) and [architecture](docs/architecture.md) for the planned behavior.
+A local command-line tool for organizing personal photo and video collections. See the [product overview](docs/business/overview.md) and [architecture](docs/architecture.md) for details.
+
+## Organize interactively
+
+Run `media-organizer` with no arguments in a terminal. From the source tree, use `cargo run --locked`.
+
+1. Type the folder path. Relative paths start from your current directory. Press Tab to complete a directory name or extend it to the shared prefix of matching directories. Press Enter to analyze the folder.
+2. Review the report, then use the arrow keys and Enter to decide whether to remove duplicate copies and gather subfolder media into the selected folder. Both choices start at No.
+3. Review the preview, then select Exit, Restart or Apply. Exit is selected by default. Apply is available when there are changes and the preview has no blocked destinations.
+4. After selecting Apply, type `yes` and press Enter to confirm. The command warns before asking you to confirm permanent duplicate removal.
+
+Escape and Ctrl+C leave a guided prompt without applying the plan. To use the explicit modes below, pass a path or mode flag. With no arguments and redirected input or output, the command reads the folder path at the prompt and prints the analysis report.
 
 ## Analyze a folder
 
-Run `media-organizer` and enter the folder path when prompted, or run `media-organizer "/path/to/folder"`. From the source tree, use `cargo run --locked -- "/path/to/folder"`.
+Run `media-organizer "/path/to/folder"`. From the source tree, use `cargo run --locked -- "/path/to/folder"`.
 
 The report covers all levels of subfolders and includes file and duplicate totals by type and extension. Files with identical bytes count as extra copies after the first file in path order. The analysis leaves files and folders in place. It skips links found inside the selected folder and Windows reparse points, including junctions and some cloud placeholders.
 

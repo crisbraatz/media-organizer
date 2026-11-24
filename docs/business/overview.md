@@ -18,7 +18,7 @@ Ferramenta gratuita e de código aberto. A pessoa que opera o comando escolhe a 
 
 ## Canal e plataformas
 
-Comando interativo `media-organizer` no terminal, disponível para Linux, Windows e macOS.
+Comando interativo `media-organizer` no terminal, disponível para Linux, Windows e macOS. Sem argumentos, o fluxo guiado oferece autocompletar por Tab, menus por setas, prévia e a opção de recomeçar.
 
 ## Dados e integrações
 

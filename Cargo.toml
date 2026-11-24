@@ -11,5 +11,6 @@ publish = false
 unsafe_code = "forbid"
 
 [dependencies]
+crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 nom-exif = "=3.8.0"
 renamest = "=0.1.3"

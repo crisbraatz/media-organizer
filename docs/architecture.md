@@ -57,3 +57,7 @@ Accepted. Reuse the existing exact-content groups, with the earliest native path
 ## ADR-005 — Confined cross-directory moves and empty-folder cleanup
 
 Accepted. Flattening plans one root sequence after optional duplicate filtering. Keep exclusive staging beside each original and validate both parents for cross-directory finalization and recovery. An unsupported cross-filesystem move fails through the existing rollback path. After successful file operations, check the captured identity of affected ancestor subfolders where available and attempt nonrecursive removal, deepest first. Preserve occupied and unrelated directories. Directory cleanup errors are separate from file execution errors.
+
+## ADR-006 — Guided terminal flow
+
+Accepted. Use Crossterm key events and bracketed paste handling for the no-argument flow when both input and output are terminals. Scope raw mode to each key-driven prompt. Restore normal terminal settings before displaying reports or reading the existing cooked confirmation line. Route the reviewed plan through the same validation and execution as flag-based apply. Keep positional arguments and redirected streams on the existing CLI path. [Crossterm event API](https://docs.rs/crossterm/0.29.0/crossterm/event/index.html)
