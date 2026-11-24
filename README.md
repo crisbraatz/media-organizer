@@ -1,6 +1,12 @@
 # media-organizer
 
-A local command-line tool for organizing personal photo and video collections. The initial scaffold provides the command and its help and version flags. See the [product overview](docs/business/overview.md) and [architecture](docs/architecture.md) for the planned behavior.
+A local command-line tool for organizing personal photo and video collections. The current version analyzes a selected folder and reports photos, videos, duplicates and subfolders. See the [product overview](docs/business/overview.md) and [architecture](docs/architecture.md) for the planned behavior.
+
+## Analyze a folder
+
+Run `media-organizer` and enter the folder path when prompted, or run `media-organizer "/path/to/folder"`. From the source tree, use `cargo run --locked -- "/path/to/folder"`.
+
+The report covers all levels of subfolders and includes file and duplicate totals by type and extension. Files with identical bytes count as extra copies after the first file in path order. The analysis leaves files and folders in place. It skips links found inside the selected folder and Windows reparse points, including junctions and some cloud placeholders.
 
 ## Develop locally
 

@@ -18,6 +18,7 @@ updated: 2026-11-24
 1. A ordenação usa a data de captura, com a data de criação do arquivo como alternativa.
 2. A sequência começa em 1. Complete com zeros à esquerda conforme o número de dígitos da contagem final e preserve a extensão.
 3. A remoção de duplicatas e a reunião de arquivos na pasta principal são opcionais. Quando escolhidas, precedem a renomeação final.
+4. A análise inclui todos os níveis de subpastas. Cada grupo de arquivos com conteúdo idêntico conta como uma mídia original e uma duplicata por cópia adicional. A contagem é atribuída ao tipo e à extensão de cada cópia (funcionalidade 001).
 
 ## Invariantes
 

@@ -10,7 +10,7 @@ Fotos e vídeos de celulares, câmeras, downloads e exportações chegam com nom
 
 ## Proposta de valor
 
-O comando analisa a pasta escolhida e apresenta um resumo antes de alterar arquivos. Após a confirmação da pessoa, renomeia as mídias em sequência pela data de captura, usando a data de criação do arquivo quando a data de captura não consta nos metadados. A pessoa pode optar por remover duplicatas detectadas pelo conteúdo e reunir mídias de subpastas na pasta principal.
+O comando analisa a pasta escolhida e apresenta um resumo antes de alterar arquivos. A análise percorre todos os níveis de subpastas e mostra a quantidade de mídias e duplicatas por tipo e extensão. Após a confirmação da pessoa, renomeia as mídias em sequência pela data de captura, usando a data de criação do arquivo quando a data de captura não consta nos metadados. A pessoa pode optar por remover duplicatas detectadas pelo conteúdo e reunir mídias de subpastas na pasta principal.
 
 ## Modelo e papéis
 
