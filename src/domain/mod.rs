@@ -147,3 +147,5 @@ mod tests {
         assert_eq!(report.extensions["jpg"].duplicates, 1);
     }
 }
+
+pub(crate) mod preview;

@@ -42,10 +42,14 @@ fn command() -> Command {
 }
 
 fn prompt(input: &str) -> std::process::Output {
+    prompt_with(command(), input)
+}
+
+fn prompt_with(mut command: Command, input: &str) -> std::process::Output {
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = command()
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -162,4 +166,74 @@ fn literal_prompt_whitespace_is_preserved() {
     let space = root.0.join("trailing ");
     std::fs::create_dir(&space).unwrap();
     assert!(prompt(&format!("{}\n", space.display())).status.success());
+}
+
+#[test]
+fn preview_is_opt_in_and_reports_read_only_names_and_collisions() {
+    use std::fs;
+
+    let root = Scratch::new();
+    let blocked_directory = root.0.join("1.JPG");
+    let nested = root.0.join("nested");
+    fs::create_dir(&blocked_directory).unwrap();
+    fs::create_dir(&nested).unwrap();
+    let photo = root.0.join("original.JPG");
+    let video = nested.join("1.mov");
+    fs::write(&photo, b"photo").unwrap();
+    fs::write(&video, b"video").unwrap();
+
+    let regular = command().arg(&root.0).output().unwrap();
+    assert!(regular.status.success());
+    assert!(
+        !String::from_utf8(regular.stdout)
+            .unwrap()
+            .contains("Rename preview")
+    );
+
+    let preview = command()
+        .args(["--preview", "--"])
+        .arg(&root.0)
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{:?}", preview.stderr);
+    let text = String::from_utf8(preview.stdout).unwrap();
+    let report_start = text.find("Media: 2").unwrap();
+    let preview_start = text.find("Rename preview").unwrap();
+    assert!(report_start < preview_start);
+    assert!(text.contains("\"original.JPG\" -> \"1.JPG\" [blocked]"));
+    let relative_video = std::path::Path::new("nested").join("1.mov");
+    assert!(text.contains(&format!(
+        "{relative_video:?} -> {relative_video:?} [unchanged]"
+    )));
+    assert!(blocked_directory.is_dir());
+    assert_eq!(fs::read(photo).unwrap(), b"photo");
+    assert_eq!(fs::read(video).unwrap(), b"video");
+}
+
+#[test]
+fn preview_can_prompt_for_an_empty_folder() {
+    let root = Scratch::new();
+    let mut cmd = command();
+    cmd.arg("--preview");
+    let output = prompt_with(cmd, &format!("{}\n", root.0.display()));
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("Folder path: "));
+    assert!(text.contains("Rename preview"));
+    assert!(text.contains("No media files."));
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_flags_dangling_child_link_as_occupied() {
+    let root = Scratch::new();
+    let destination = root.0.join("1.jpg");
+    std::os::unix::fs::symlink("missing", &destination).unwrap();
+    std::fs::write(root.0.join("photo.jpg"), b"photo").unwrap();
+
+    let preview = command().arg("--preview").arg(&root.0).output().unwrap();
+    assert!(preview.status.success(), "{:?}", preview.stderr);
+    let text = String::from_utf8(preview.stdout).unwrap();
+    assert!(text.contains("\"photo.jpg\" -> \"1.jpg\" [blocked]"));
+    assert!(destination.symlink_metadata().unwrap().is_symlink());
 }

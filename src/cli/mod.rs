@@ -1,15 +1,21 @@
-use crate::application::{self, MediaSource};
+use crate::application::{self, MediaSource, PreviewRow};
 use crate::domain::{AnalysisReport, MediaCounts};
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 pub(crate) fn run(
     mut arguments: impl Iterator<Item = OsString>,
     source: &impl MediaSource,
 ) -> ExitCode {
-    let first = arguments.next();
+    let mut first = arguments.next();
+    let preview = first
+        .as_deref()
+        .is_some_and(|argument| argument == "--preview");
+    if preview {
+        first = arguments.next();
+    }
     let positional = if first.as_deref().is_some_and(|argument| argument == "--") {
         let Some(path) = arguments.next() else {
             return usage_error();
@@ -17,12 +23,13 @@ pub(crate) fn run(
         Some(path)
     } else {
         match first.as_deref().and_then(|argument| argument.to_str()) {
-            Some("--version" | "-V") if arguments.next().is_none() => {
+            Some("--version" | "-V") if !preview && arguments.next().is_none() => {
                 println!("media-organizer {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
-            Some("--help" | "-h") if arguments.next().is_none() => {
-                println!("Usage: media-organizer [--help | --version | [--] <folder>]");
+            Some("--help" | "-h") if !preview && arguments.next().is_none() => {
+                println!("Usage: media-organizer [--preview] [[--] <folder>]");
+                println!("       media-organizer --help | --version");
                 return ExitCode::SUCCESS;
             }
             _ if first
@@ -53,9 +60,12 @@ pub(crate) fn run(
         }
     };
 
-    match application::analyze(source, &folder) {
-        Ok(report) => {
-            print_report(&report);
+    match application::analyze_folder(source, &folder, preview) {
+        Ok(analysis) => {
+            print_report(&analysis.report);
+            if let Some(rows) = analysis.preview {
+                print_preview(&folder, &rows);
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -88,6 +98,29 @@ fn print_report(report: &AnalysisReport) {
     for (extension, counts) in &report.extensions {
         print_counts(&format!(".{extension}"), counts);
     }
+}
+
+fn print_preview(root: &Path, rows: &[PreviewRow]) {
+    println!("Rename preview:");
+    if rows.is_empty() {
+        println!("No media files.");
+    }
+    for row in rows {
+        let source = relative_to(root, &row.name.source);
+        let destination = relative_to(root, &row.name.destination);
+        let status = if row.blocked {
+            " [blocked]"
+        } else if source == destination {
+            " [unchanged]"
+        } else {
+            ""
+        };
+        println!("{source:?} -> {destination:?}{status}");
+    }
+}
+
+fn relative_to<'a>(root: &Path, path: &'a Path) -> &'a Path {
+    path.strip_prefix(root).unwrap_or(path)
 }
 
 fn print_counts(label: &str, counts: &MediaCounts) {

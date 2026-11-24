@@ -20,6 +20,8 @@ updated: 2026-11-24
 3. A remoção de duplicatas e a reunião de arquivos na pasta principal são opcionais. Quando escolhidas, precedem a renomeação final.
 4. A análise inclui todos os níveis de subpastas. Cada grupo de arquivos com conteúdo idêntico conta como uma mídia original e uma duplicata por cópia adicional. A contagem é atribuída ao tipo e à extensão de cada cópia (funcionalidade 001).
 
+5. A prévia calcula uma sequência por pasta. Datas indisponíveis ficam no fim, empates seguem o nome atual e a extensão é preservada. A prévia indica destinos ocupados por entradas que ficam no lugar (funcionalidade 002).
+
 ## Invariantes
 
 - A análise é apresentada antes de qualquer alteração.

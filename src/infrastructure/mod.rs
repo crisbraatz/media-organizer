@@ -5,16 +5,18 @@ use std::fs::{self, File, Metadata};
 use std::hash::{DefaultHasher, Hasher};
 use std::io::{self, Read};
 use std::path::Path;
+use std::time::SystemTime;
 
 const BLOCK_SIZE: usize = 16 * 1024;
 
 pub(crate) struct LocalMediaSource;
 
 impl MediaSource for LocalMediaSource {
-    fn inventory(&self, root: &Path) -> io::Result<FolderInventory> {
+    fn inventory(&self, root: &Path, include_entries: bool) -> io::Result<FolderInventory> {
         let mut pending = vec![root.to_path_buf()];
         let mut inventory = FolderInventory {
             files: Vec::new(),
+            entries: Vec::new(),
             subfolders: 0,
         };
         while let Some(directory) = pending.pop() {
@@ -24,6 +26,9 @@ impl MediaSource for LocalMediaSource {
                 let entry =
                     entry.map_err(|error| path_error("read entry in", &directory, error))?;
                 let path = entry.path();
+                if include_entries {
+                    inventory.entries.push(path.clone());
+                }
                 let metadata = entry
                     .metadata()
                     .map_err(|error| path_error("inspect", &path, error))?;
@@ -39,6 +44,18 @@ impl MediaSource for LocalMediaSource {
             }
         }
         Ok(inventory)
+    }
+
+    fn capture_timestamp(&self, path: &Path) -> io::Result<Option<SystemTime>> {
+        capture_time::capture_timestamp(path)
+    }
+
+    fn destination_exists(&self, path: &Path) -> io::Result<bool> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(path_error("inspect proposed destination", path, error)),
+        }
     }
 
     fn fingerprint(&self, path: &Path) -> io::Result<Fingerprint> {
@@ -148,7 +165,7 @@ fn read_block(reader: &mut impl Read, mut remaining: &mut [u8]) -> io::Result<us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::analyze;
+    use crate::application::analyze_folder;
     use crate::domain::MediaCounts;
     use std::io::Cursor;
     use std::path::PathBuf;
@@ -186,7 +203,9 @@ mod tests {
         std::fs::write(nested.join("different.png"), b"else").unwrap();
         std::fs::write(nested.join("ignored.txt"), b"copy").unwrap();
 
-        let report = analyze(&LocalMediaSource, &root.0).unwrap();
+        let report = analyze_folder(&LocalMediaSource, &root.0, false)
+            .unwrap()
+            .report;
 
         assert_eq!(report.subfolders, 2);
         assert_eq!(
@@ -210,7 +229,9 @@ mod tests {
         std::os::unix::fs::symlink(&outside.0, root.0.join("directory-link")).unwrap();
         std::os::unix::fs::symlink(media, root.0.join("file-link.jpg")).unwrap();
 
-        let report = analyze(&LocalMediaSource, &root.0).unwrap();
+        let report = analyze_folder(&LocalMediaSource, &root.0, false)
+            .unwrap()
+            .report;
 
         assert_eq!(report.subfolders, 0);
         assert_eq!(report.total(), MediaCounts::default());
@@ -221,7 +242,7 @@ mod tests {
         let root = Scratch::new();
         let absent = root.0.join("absent.jpg");
 
-        let Err(error) = analyze(&LocalMediaSource, &absent) else {
+        let Err(error) = analyze_folder(&LocalMediaSource, &absent, false) else {
             panic!("missing directory was accepted");
         };
         assert!(error.to_string().contains("absent.jpg"));
@@ -262,3 +283,5 @@ mod tests {
         assert!(!contents_equal(&mut left, &mut right).unwrap());
     }
 }
+
+pub(crate) mod capture_time;

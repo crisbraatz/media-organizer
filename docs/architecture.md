@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | Language and build | Rust and Cargo | 1.100.0 toolchain, Edition 2024 | Portable native CLI |
 | Terminal | Crossterm | 0.29.0 | Keyboard events and terminal rendering |
-| Metadata | nom-exif | 3.8.0 candidate | Validate capture timestamp coverage before adoption |
+| Metadata | nom-exif | 3.8.0 | Read embedded capture times for the optional preview |
 
 ## Architecture style
 
@@ -36,3 +36,8 @@ Publish native executables through GitHub Releases. The container build is avail
 ## ADR-001 — Initial stack and architecture
 
 Accepted. Use Rust and a layered modular monolith to keep distribution simple while validating filesystem behavior separately from rules and terminal interaction. Crossterm will support the interactive terminal. The metadata adapter lets the project verify format coverage before committing to a parser.
+
+
+## ADR-002 — Preview timestamp source
+
+Accepted for the read-only preview. Use nom-exif 3.8.0 in infrastructure to read image capture and video creation tags. Generated JPEG, DNG and MP4 fixtures exercise the parser. When metadata is absent, malformed or unsupported, use file creation time when available. Interpret offset-free metadata as UTC. The OSV audit identified an informational maintenance notice for the indirect chrono dependency. [RustSec advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543.html)
