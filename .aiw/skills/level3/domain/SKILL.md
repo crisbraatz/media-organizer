@@ -24,6 +24,8 @@ updated: 2026-11-24
 
 6. Ao aplicar uma prévia, confirme o plano antes de renomear. Destinos que ficam ocupados bloqueiam a ação. Se uma operação falhar, tente restaurar os nomes originais e identifique qualquer recuperação manual (funcionalidade 003).
 
+7. Ao escolher remover duplicatas, preserve o primeiro caminho de cada grupo confirmado byte a byte. Conte apenas as mídias mantidas na numeração. As cópias são excluídas permanentemente após a renomeação, com confirmação e nova comparação de conteúdo (funcionalidade 004).
+
 ## Invariantes
 
 - A análise é apresentada antes de qualquer alteração.

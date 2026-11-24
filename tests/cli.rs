@@ -350,3 +350,66 @@ fn apply_noop_and_flags_have_clear_outcomes() {
     let invalid = command().args(["--preview", "--apply"]).output().unwrap();
     assert_eq!(invalid.status.code(), Some(2));
 }
+
+#[test]
+fn duplicate_preview_and_confirmed_removal_preserve_the_first_path() {
+    use std::fs;
+
+    let root = Scratch::new();
+    let keeper = root.0.join("1.JPG");
+    let copy = root.0.join("copy.JPG");
+    fs::write(&keeper, b"same").unwrap();
+    fs::write(&copy, b"same").unwrap();
+
+    let preview = command()
+        .args(["--remove-duplicates", "--preview", "--"])
+        .arg(&root.0)
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{:?}", preview.stderr);
+    let output = String::from_utf8(preview.stdout).unwrap();
+    assert!(output.contains("Remove \"copy.JPG\" and keep \"1.JPG\""));
+    assert!(output.contains("\"1.JPG\" -> \"1.JPG\" [unchanged]"));
+    assert_eq!(fs::read(&copy).unwrap(), b"same");
+
+    for answer in ["", "yes", "\n", "no\n"] {
+        let mut cmd = command();
+        cmd.args(["--apply", "--remove-duplicates"]).arg(&root.0);
+        let cancelled = prompt_with(cmd, answer);
+        assert!(cancelled.status.success(), "{:?}", cancelled.stderr);
+        let output = String::from_utf8(cancelled.stdout).unwrap();
+        assert!(output.find("permanently").unwrap() < output.find("Type yes").unwrap());
+        assert!(output.contains("Cancelled"));
+        assert_eq!(fs::read(&copy).unwrap(), b"same");
+    }
+
+    let mut cmd = command();
+    cmd.args(["--remove-duplicates", "--apply"]).arg(&root.0);
+    let applied = prompt_with(cmd, "yes\r\n");
+    assert!(applied.status.success(), "{:?}", applied.stderr);
+    let output = String::from_utf8(applied.stdout).unwrap();
+    assert!(output.contains("Renamed 0 media files."));
+    assert!(output.contains("Removed 1 duplicate"));
+    assert_eq!(fs::read(&keeper).unwrap(), b"same");
+    assert!(!copy.exists());
+    assert_eq!(fs::read_dir(&root.0).unwrap().count(), 1);
+}
+
+#[test]
+fn remove_duplicates_requires_exactly_one_explicit_mode() {
+    let root = Scratch::new();
+    for arguments in [
+        &["--remove-duplicates"][..],
+        &["--preview", "--apply", "--remove-duplicates"],
+        &["--preview", "--remove-duplicates", "--remove-duplicates"],
+    ] {
+        let output = command().args(arguments).arg(&root.0).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+    }
+
+    std::fs::write(root.0.join("1.jpg"), b"same").unwrap();
+    std::fs::write(root.0.join("2.jpg"), b"same").unwrap();
+    let output = command().arg("--apply").arg(&root.0).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 2);
+}

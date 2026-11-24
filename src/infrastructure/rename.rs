@@ -1,5 +1,7 @@
 use super::{LocalMediaSource, is_link_or_reparse_point, path_error};
-use crate::application::{RenameSource, SourceObservation};
+use crate::application::{
+    DuplicateRemoval, MediaSource, RenameSource, SourceObservation, StagedCopy,
+};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -92,6 +94,50 @@ impl RenameSource for LocalMediaSource {
     }
 }
 
+impl DuplicateRemoval for LocalMediaSource {
+    fn remove_staged_copy(&self, root: &Path, copy: StagedCopy<'_>) -> io::Result<()> {
+        if copy.path == copy.keeper
+            || copy.path.extension() != Some("stage".as_ref())
+            || !copy
+                .path
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b".media-organizer-"))
+        {
+            return Err(path_error(
+                "remove as staged copy",
+                copy.path,
+                ErrorKind::InvalidInput.into(),
+            ));
+        }
+        let observe_pair = || -> io::Result<()> {
+            for (path, reviewed) in [
+                (copy.path, copy.observation),
+                (copy.keeper, copy.keeper_observation),
+            ] {
+                if !matches_for_move(&self.observe_source(root, path)?, reviewed) {
+                    return Err(path_error(
+                        "remove copy with changed entry",
+                        path,
+                        ErrorKind::InvalidData.into(),
+                    ));
+                }
+            }
+            Ok(())
+        };
+        observe_pair()?;
+        if !self.contents_equal(copy.path, copy.keeper)? {
+            return Err(path_error(
+                "remove copy with different content",
+                copy.path,
+                ErrorKind::InvalidData.into(),
+            ));
+        }
+        observe_pair()?;
+        fs::remove_file(copy.path)
+            .map_err(|error| path_error("remove staged copy", copy.path, error))
+    }
+}
+
 fn matches_for_move(live: &SourceObservation, reviewed: &SourceObservation) -> bool {
     if cfg!(windows) {
         // Windows file-system tunneling can change creation time when we reuse a name.
@@ -126,6 +172,30 @@ fn optional_time(result: io::Result<SystemTime>, path: &Path) -> io::Result<Opti
 mod tests {
     use super::*;
     use crate::infrastructure::{LocalMediaSource, tests::Scratch};
+
+    #[test]
+    fn refuses_cleanup_if_reviewed_entries_have_different_bytes() {
+        let scratch = Scratch::new();
+        let fs = LocalMediaSource;
+        let root = fs.canonical_root(&scratch.0).unwrap();
+        let copy = root.join(".media-organizer-test.stage");
+        let keeper = root.join("keeper.JPG");
+        fs::write(&copy, b"copy").unwrap();
+        fs::write(&keeper, b"keep").unwrap();
+
+        let request = StagedCopy {
+            path: &copy,
+            observation: &fs.observe_source(&root, &copy).unwrap(),
+            keeper: &keeper,
+            keeper_observation: &fs.observe_source(&root, &keeper).unwrap(),
+        };
+        assert_eq!(
+            fs.remove_staged_copy(&root, request).unwrap_err().kind(),
+            ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&copy).unwrap(), b"copy");
+        assert_eq!(fs::read(&keeper).unwrap(), b"keep");
+    }
 
     #[test]
     fn refuses_occupied_targets_and_preserves_bytes_when_renaming() {

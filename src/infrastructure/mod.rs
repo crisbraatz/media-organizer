@@ -203,7 +203,7 @@ pub(crate) mod tests {
         std::fs::write(nested.join("different.png"), b"else").unwrap();
         std::fs::write(nested.join("ignored.txt"), b"copy").unwrap();
 
-        let report = analyze_folder(&LocalMediaSource, &root.0, false)
+        let report = analyze_folder(&LocalMediaSource, &root.0, false, false)
             .unwrap()
             .report;
 
@@ -229,7 +229,7 @@ pub(crate) mod tests {
         std::os::unix::fs::symlink(&outside.0, root.0.join("directory-link")).unwrap();
         std::os::unix::fs::symlink(media, root.0.join("file-link.jpg")).unwrap();
 
-        let report = analyze_folder(&LocalMediaSource, &root.0, false)
+        let report = analyze_folder(&LocalMediaSource, &root.0, false, false)
             .unwrap()
             .report;
 
@@ -242,7 +242,7 @@ pub(crate) mod tests {
         let root = Scratch::new();
         let absent = root.0.join("absent.jpg");
 
-        let Err(error) = analyze_folder(&LocalMediaSource, &absent, false) else {
+        let Err(error) = analyze_folder(&LocalMediaSource, &absent, false, false) else {
             panic!("missing directory was accepted");
         };
         assert!(error.to_string().contains("absent.jpg"));

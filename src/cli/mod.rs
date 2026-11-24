@@ -1,5 +1,8 @@
-use crate::application::{self, MediaSource, PreviewRow, RenameSource, apply};
+use crate::application::{
+    self, DuplicateCopy, DuplicateRemoval, MediaSource, PreviewRow, RenameSource, apply,
+};
 use crate::domain::{AnalysisReport, MediaCounts};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -7,18 +10,25 @@ use std::process::ExitCode;
 
 pub(crate) fn run(
     mut arguments: impl Iterator<Item = OsString>,
-    source: &(impl MediaSource + RenameSource),
+    source: &(impl MediaSource + RenameSource + DuplicateRemoval),
 ) -> ExitCode {
     let mut first = arguments.next();
-    let apply = first
-        .as_deref()
-        .is_some_and(|argument| argument == "--apply");
-    let preview = first
-        .as_deref()
-        .is_some_and(|argument| argument == "--preview");
-    if preview || apply {
+    let mut apply = false;
+    let mut preview = false;
+    let mut remove_duplicates = false;
+    loop {
+        match first.as_deref().and_then(|argument| argument.to_str()) {
+            Some("--apply") if !apply && !preview => apply = true,
+            Some("--preview") if !apply && !preview => preview = true,
+            Some("--remove-duplicates") if !remove_duplicates => remove_duplicates = true,
+            _ => break,
+        }
         first = arguments.next();
     }
+    if remove_duplicates && !(apply || preview) {
+        return usage_error();
+    }
+
     let positional = if first.as_deref().is_some_and(|argument| argument == "--") {
         let Some(path) = arguments.next() else {
             return usage_error();
@@ -32,6 +42,7 @@ pub(crate) fn run(
             }
             Some("--help" | "-h") if !preview && !apply && arguments.next().is_none() => {
                 println!("Usage: media-organizer [--preview | --apply] [[--] <folder>]");
+                println!("       Add --remove-duplicates to --preview or --apply.");
                 println!("       media-organizer --help | --version");
                 return ExitCode::SUCCESS;
             }
@@ -64,14 +75,15 @@ pub(crate) fn run(
     };
 
     if apply {
-        return apply_folder(source, &folder);
+        return apply_folder(source, &folder, remove_duplicates);
     }
 
-    match application::analyze_folder(source, &folder, preview) {
+    match application::analyze_folder(source, &folder, preview, remove_duplicates) {
         Ok(analysis) => {
             print_report(&analysis.report);
             if let Some(rows) = analysis.preview {
                 print_preview(&folder, &rows);
+                print_duplicates(&folder, &rows, &analysis.duplicates, remove_duplicates);
             }
             ExitCode::SUCCESS
         }
@@ -82,8 +94,12 @@ pub(crate) fn run(
     }
 }
 
-fn apply_folder(source: &(impl MediaSource + RenameSource), folder: &Path) -> ExitCode {
-    let plan = match apply::prepare_apply(source, folder) {
+fn apply_folder(
+    source: &(impl MediaSource + RenameSource + DuplicateRemoval),
+    folder: &Path,
+    remove_duplicates: bool,
+) -> ExitCode {
+    let plan = match apply::prepare_apply(source, folder, remove_duplicates) {
         Ok(plan) => plan,
         Err(error) => {
             eprintln!("Analysis failed: {error}");
@@ -93,22 +109,31 @@ fn apply_folder(source: &(impl MediaSource + RenameSource), folder: &Path) -> Ex
 
     print_report(&plan.report);
     print_preview(&plan.root, &plan.rows);
+    print_duplicates(&plan.root, &plan.rows, &plan.duplicates, remove_duplicates);
     if plan.rows.iter().any(|row| row.blocked) {
         eprintln!("Cannot apply: the preview has occupied destinations.");
         return ExitCode::FAILURE;
     }
-    if plan
-        .rows
-        .iter()
-        .all(|row| row.name.source == row.name.destination)
+    if plan.duplicates.is_empty()
+        && plan
+            .rows
+            .iter()
+            .all(|row| row.name.source == row.name.destination)
     {
         println!("No files need renaming.");
         return ExitCode::SUCCESS;
     }
 
-    match confirm_apply() {
+    if !plan.duplicates.is_empty() {
+        println!("This will permanently delete the listed duplicate copies.");
+    }
+    match confirm_apply(!plan.duplicates.is_empty()) {
         Ok(false) => {
-            println!("Cancelled. No files were renamed.");
+            if plan.duplicates.is_empty() {
+                println!("Cancelled. No files were renamed.");
+            } else {
+                println!("Cancelled. No files were changed.");
+            }
             return ExitCode::SUCCESS;
         }
         Err(error) => {
@@ -122,11 +147,14 @@ fn apply_folder(source: &(impl MediaSource + RenameSource), folder: &Path) -> Ex
         return ExitCode::FAILURE;
     }
     match apply::execute(source, &plan) {
-        Ok(count) => {
-            println!("Renamed {count} media files.");
+        Ok(summary) => {
+            println!("Renamed {} media files.", summary.renamed);
+            if remove_duplicates {
+                println!("Removed {} duplicate files.", summary.removed);
+            }
             ExitCode::SUCCESS
         }
-        Err(failure) => {
+        Err(apply::CleanupError::Rename(failure)) => {
             eprintln!("Rename failed: {}", failure.trigger);
             if failure.recovery.is_empty() {
                 eprintln!("Any files moved by this operation were restored.");
@@ -139,11 +167,34 @@ fn apply_folder(source: &(impl MediaSource + RenameSource), folder: &Path) -> Ex
             }
             ExitCode::FAILURE
         }
+        Err(apply::CleanupError::Removal {
+            trigger,
+            removed,
+            remaining,
+        }) => {
+            eprintln!("Duplicate cleanup stopped after renaming: {trigger}");
+            eprintln!("Removed {} duplicate files:", removed.len());
+            for original in removed {
+                eprintln!("Removed copy from original path {original:?}");
+            }
+            eprintln!("Remaining duplicate copies: {}", remaining.len());
+            for (original, staged) in remaining {
+                eprintln!(
+                    "Original copy {original:?}. Last known staged location (unverified): {staged:?}"
+                );
+            }
+            ExitCode::FAILURE
+        }
     }
 }
 
-fn confirm_apply() -> io::Result<bool> {
-    write_prompt("Type yes and press Enter to apply these renames: ")?;
+fn confirm_apply(removing_duplicates: bool) -> io::Result<bool> {
+    let prompt = if removing_duplicates {
+        "Type yes and press Enter to apply these changes: "
+    } else {
+        "Type yes and press Enter to apply these renames: "
+    };
+    write_prompt(prompt)?;
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.as_str(), "yes\n" | "yes\r\n"))
@@ -192,6 +243,31 @@ fn print_preview(root: &Path, rows: &[PreviewRow]) {
             ""
         };
         println!("{source:?} -> {destination:?}{status}");
+    }
+}
+
+fn print_duplicates(root: &Path, rows: &[PreviewRow], duplicates: &[DuplicateCopy], enabled: bool) {
+    if !enabled {
+        return;
+    }
+    println!("Duplicate removal preview:");
+    if duplicates.is_empty() {
+        println!("No duplicate copies to remove.");
+        return;
+    }
+    let destinations: HashMap<_, _> = rows
+        .iter()
+        .map(|row| (row.name.source.as_path(), row.name.destination.as_path()))
+        .collect();
+    for entry in duplicates {
+        let copy = relative_to(root, &entry.copy);
+        let keeper = relative_to(root, &entry.keeper);
+        let final_path = relative_to(root, destinations[entry.keeper.as_path()]);
+        if keeper == final_path {
+            println!("Remove {copy:?} and keep {keeper:?}");
+        } else {
+            println!("Remove {copy:?} and keep {keeper:?} as {final_path:?}");
+        }
     }
 }
 

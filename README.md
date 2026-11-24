@@ -24,6 +24,14 @@ The command checks the reviewed plan again before moving files and uses native o
 
 Avoid editing the folder during an apply operation. Validation checks the live filesystem on a best-effort basis. The command can attempt recovery after a reported move error. A process interruption can leave files at a final name or under temporary `.media-organizer-*.stage` names.
 
+## Remove duplicate copies
+
+Add `--remove-duplicates` to `--preview` to see which copies would be removed and which file would be kept. Add it to `--apply` to remove those copies permanently after you review the plan and type `yes` followed by Enter.
+
+Duplicates are checked byte for byte across the selected folder and its subfolders. The first path in native sort order is kept, and each folder's numbering uses only its surviving files. The analysis totals describe the folder before any changes.
+
+The command stages duplicate copies until every survivor rename succeeds. Before deleting each staged copy, it confirms that the keeper still matches. If cleanup fails, completed survivor renames stay in place. The command lists the copies already removed and the last known staged paths of the remaining copies.
+
 ## Develop locally
 
 Install Rust with [rustup](https://rustup.rs/). The repository pins the toolchain and formatting and linting components.

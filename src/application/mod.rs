@@ -48,9 +48,27 @@ pub(crate) trait RenameSource {
     ) -> io::Result<()>;
 }
 
+pub(crate) struct StagedCopy<'a> {
+    pub(crate) path: &'a Path,
+    pub(crate) observation: &'a SourceObservation,
+    pub(crate) keeper: &'a Path,
+    pub(crate) keeper_observation: &'a SourceObservation,
+}
+
+pub(crate) trait DuplicateRemoval {
+    fn remove_staged_copy(&self, root: &Path, copy: StagedCopy<'_>) -> io::Result<()>;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct DuplicateCopy {
+    pub(crate) copy: PathBuf,
+    pub(crate) keeper: PathBuf,
+}
+
 pub(crate) struct Analysis {
     pub(crate) report: AnalysisReport,
     pub(crate) preview: Option<Vec<PreviewRow>>,
+    pub(crate) duplicates: Vec<DuplicateCopy>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -63,14 +81,17 @@ pub(crate) fn analyze_folder(
     source: &impl MediaSource,
     root: &Path,
     preview: bool,
+    remove_duplicates: bool,
 ) -> io::Result<Analysis> {
-    analyze_with_observations(source, root, preview, None).map(|(analysis, _)| analysis)
+    analyze_with_observations(source, root, preview, remove_duplicates, None)
+        .map(|(analysis, _)| analysis)
 }
 
 fn analyze_with_observations(
     source: &impl MediaSource,
     root: &Path,
     preview: bool,
+    remove_duplicates: bool,
     observer: Option<&dyn RenameSource>,
 ) -> io::Result<(Analysis, HashMap<PathBuf, apply::SourceEvidence>)> {
     let mut inventory = source.inventory(root, preview)?;
@@ -83,6 +104,7 @@ fn analyze_with_observations(
     let mut representatives: HashMap<Fingerprint, Vec<PathBuf>> = HashMap::new();
     let mut dated = Vec::new();
     let mut observations = HashMap::new();
+    let mut duplicates = Vec::new();
     for path in inventory.files {
         let Some(format) = MediaFormat::classify(path.extension()) else {
             continue;
@@ -92,14 +114,14 @@ fn analyze_with_observations(
             .transpose()?;
         let fingerprint = source.fingerprint(&path)?;
         let bucket = representatives.entry(fingerprint).or_default();
-        let mut duplicate = false;
+        let mut keeper = None;
         for other in bucket.iter() {
             if source.contents_equal(other, &path)? {
-                duplicate = true;
+                keeper = Some(other);
                 break;
             }
         }
-        report.record(&format, duplicate);
+        report.record(&format, keeper.is_some());
         if preview {
             let timestamp = source.capture_timestamp(&path)?;
             if let Some((observer, observation)) = observer.zip(before) {
@@ -118,12 +140,19 @@ fn analyze_with_observations(
                     },
                 );
             }
-            dated.push(DatedMedia {
-                path: path.clone(),
-                timestamp,
-            });
+            if let Some(keeper) = keeper.filter(|_| remove_duplicates) {
+                duplicates.push(DuplicateCopy {
+                    copy: path.clone(),
+                    keeper: keeper.clone(),
+                });
+            } else {
+                dated.push(DatedMedia {
+                    path: path.clone(),
+                    timestamp,
+                });
+            }
         }
-        if !duplicate {
+        if keeper.is_none() {
             bucket.push(path);
         }
     }
@@ -133,17 +162,26 @@ fn analyze_with_observations(
             source,
             propose_names(dated),
             &inventory.entries,
+            &duplicates,
         )?)
     } else {
         None
     };
-    Ok((Analysis { report, preview }, observations))
+    Ok((
+        Analysis {
+            report,
+            preview,
+            duplicates,
+        },
+        observations,
+    ))
 }
 
 fn mark_conflicts(
     source: &impl MediaSource,
     names: Vec<ProposedName>,
     entries: &[PathBuf],
+    duplicates: &[DuplicateCopy],
 ) -> io::Result<Vec<PreviewRow>> {
     let exact: HashSet<_> = entries.iter().map(PathBuf::as_path).collect();
     let mut aliases = HashMap::new();
@@ -160,6 +198,7 @@ fn mark_conflicts(
         .iter()
         .filter(|name| name.source != name.destination)
         .map(|name| name.source.as_path())
+        .chain(duplicates.iter().map(|copy| copy.copy.as_path()))
         .collect();
     let mut blocked = Vec::with_capacity(names.len());
     for name in &names {
@@ -254,7 +293,7 @@ mod tests {
     #[test]
     fn report_only_does_not_read_timestamps() {
         let source = source(&["root/photo.jpg"], &["root/photo.jpg"]);
-        let analysis = analyze_folder(&source, Path::new("root"), false).unwrap();
+        let analysis = analyze_folder(&source, Path::new("root"), false, false).unwrap();
         assert_eq!(analysis.report.total().files, 1);
         assert!(analysis.preview.is_none());
         assert_eq!(source.reads.get(), 0);
@@ -277,7 +316,7 @@ mod tests {
                 "root/b/1.JPG",
             ],
         );
-        let rows = analyze_folder(&source, Path::new("root"), true)
+        let rows = analyze_folder(&source, Path::new("root"), true, false)
             .unwrap()
             .preview
             .unwrap();
@@ -289,7 +328,7 @@ mod tests {
     #[test]
     fn unchanged_source_never_blocks_itself() {
         let source = source(&["root/1.JPG"], &["root/1.JPG"]);
-        let rows = analyze_folder(&source, Path::new("root"), true)
+        let rows = analyze_folder(&source, Path::new("root"), true, false)
             .unwrap()
             .preview
             .unwrap();
