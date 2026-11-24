@@ -1,0 +1,5 @@
+services:
+  media-organizer:
+    build: .
+    read_only: true
+    network_mode: none

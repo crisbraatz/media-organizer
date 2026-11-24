@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "initialized": true,
+  "step": "done",
+  "userLanguage": "pt-BR",
+  "branchMode": "main",
+  "trunkBranch": "main",
+  "createdWith": "0.8.0",
+  "lastAgent": "codex",
+  "businessSummary": "Media Organizer is a free, open-source interactive CLI for people who organize personal photo and video collections on Linux, Windows, and macOS. It previews changes before applying chronological renaming and offers optional duplicate removal and subfolder flattening. The rewrite uses a different language, preserves the behavior documented in the original README, and is invoked as media-organizer.",
+  "stack": [
+    {
+      "name": "Rust/Cargo",
+      "version": "1.100.0"
+    },
+    {
+      "name": "Crossterm",
+      "version": "0.29.0"
+    },
+    {
+      "name": "nom-exif",
+      "version": "3.8.0",
+      "status": "candidate"
+    }
+  ],
+  "architecture": "Layered modular monolith",
+  "skills": {
+    "level2": [
+      {
+        "name": "rust",
+        "kind": "technology",
+        "sources": [
+          "https://doc.rust-lang.org/cargo/guide/project-layout.html"
+        ]
+      },
+      {
+        "name": "crossterm",
+        "kind": "technology",
+        "sources": [
+          "https://docs.rs/crossterm/0.29.0/crossterm/"
+        ]
+      },
+      {
+        "name": "nom-exif",
+        "kind": "technology",
+        "sources": [
+          "https://docs.rs/crate/nom-exif/3.8.0"
+        ]
+      },
+      {
+        "name": "architecture-layered-monolith",
+        "kind": "architecture",
+        "sources": [
+          "https://learn.microsoft.com/en-us/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures"
+        ]
+      },
+      {
+        "name": "containers",
+        "kind": "technology",
+        "sources": [
+          "https://docs.podman.io/en/latest/markdown/podman-build.1.html"
+        ]
+      },
+      {
+        "name": "github-actions",
+        "kind": "technology",
+        "sources": [
+          "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax"
+        ]
+      }
+    ],
+    "level3": [
+      {
+        "name": "domain",
+        "path": ".aiw/skills/level3/domain/SKILL.md"
+      }
+    ]
+  },
+  "currentFeature": null,
+  "checkpoint": null,
+  "featureCounter": 0
+}

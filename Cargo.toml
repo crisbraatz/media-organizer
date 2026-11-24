@@ -1,0 +1,11 @@
+[package]
+name = "media-organizer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+description = "A local command-line tool for organizing personal photo and video collections."
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"
