@@ -21,5 +21,12 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked --release
+      - name: Test Unix installer
+        if: runner.os != 'Windows'
+        run: sh tests/install.sh
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/install.ps1
       - if: runner.os == 'Linux'
         run: docker build -t media-organizer .

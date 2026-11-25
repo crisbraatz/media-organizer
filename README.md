@@ -1,28 +1,44 @@
-# Media Organizer
+# 📸 Media Organizer
 
-Organize photos and videos by capture time from your terminal. Review the plan before applying it, with optional duplicate removal and subfolder consolidation.
+Organize photos and videos by capture time from your terminal. Preview filenames, remove duplicate copies, and bring media from nested folders into one chronological sequence.
 
-[Downloads](https://github.com/crisbraatz/media-organizer/releases) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
+[![CI](https://github.com/crisbraatz/media-organizer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/crisbraatz/media-organizer/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/crisbraatz/media-organizer)](https://github.com/crisbraatz/media-organizer/releases/latest)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## What it does
-
-- Counts photos, videos, subfolders and duplicates in a folder tree.
-- Proposes chronological filenames and flags occupied destinations before you apply changes.
-- Compares duplicate files byte for byte. You can keep all copies or retain one from each group.
-- Keeps files in their existing folders by default. You can bring the surviving media into a single chronological sequence in the selected folder.
-- Processes media and metadata locally.
-
-## Quick start
-
-After installing, try the guided terminal flow with `media-organizer` or inspect a read-only preview:
-
-```sh
-media-organizer --preview "/path/to/photos"
-```
-
-Use a copy of a small folder for your first apply. Applying renames changes filenames. If you choose duplicate removal, the listed copies are deleted permanently.
+[Install](#install-a-release) · [Commands](#commands) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 ## Install a release
+
+**Install or update in two steps.** The installer picks the latest stable package for your system, verifies its SHA-256 checksum and installs it for your account. You only need your terminal.
+
+### 🐧 Linux x64 and 🍎 macOS
+
+```sh
+installer="$(mktemp)"
+curl -fsSL https://raw.githubusercontent.com/crisbraatz/media-organizer/main/install.sh -o "$installer" && sh "$installer"
+```
+
+The executable goes in `~/.local/bin`. If your shell cannot find it, run `~/.local/bin/media-organizer --version` or add that folder to your `PATH`.
+
+### 🪟 Windows x64
+
+In PowerShell:
+
+```powershell
+$installer = Join-Path $env:TEMP "media-organizer-install-$([Guid]::NewGuid().ToString('N')).ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/crisbraatz/media-organizer/main/install.ps1 -OutFile $installer -ErrorAction Stop
+& $installer
+```
+
+The installer adds the executable's folder to your user `Path`. Open a new terminal if the command is unavailable. If your PowerShell policy blocks scripts, use the manual installation below.
+
+### ✅ Verify or update
+
+Run `media-organizer --version`. To update, run your platform's install steps again.
+
+<details>
+<summary>📦 Download and verify a package manually</summary>
 
 Download your archive and the matching `SHA256SUMS` from the same [GitHub release](https://github.com/crisbraatz/media-organizer/releases). The executable runs without Rust. Replace `<version>` with the version shown on the release, such as `1.0.0`.
 
@@ -35,7 +51,7 @@ Download your archive and the matching `SHA256SUMS` from the same [GitHub releas
 
 The Linux executable is statically linked with musl. Each archive includes the project license and third-party notices.
 
-### Linux and macOS
+#### Linux and macOS
 
 In the download directory, set `archive` to the filename for your system and verify its checksum. Proceed only if the check reports `OK`.
 
@@ -56,7 +72,7 @@ install -m 755 "$package_dir/media-organizer" "$HOME/.local/bin/media-organizer"
 
 Add `$HOME/.local/bin` to your shell's `PATH` if needed.
 
-### Windows
+#### Windows
 
 In PowerShell, set the zip filename and verify its SHA-256 hash before extracting it:
 
@@ -74,6 +90,27 @@ Expand-Archive $archive -DestinationPath .\media-organizer
 
 Keep the executable in a folder on your user `Path` to run it by name from other directories.
 
+</details>
+
+## 🔎 Quick start
+
+After installing, try the guided terminal flow with `media-organizer` or inspect a read-only preview:
+
+```sh
+media-organizer --preview "/path/to/photos"
+```
+
+> [!IMPORTANT]
+> Try your first apply on a copy of a small folder. Duplicate removal permanently deletes the listed copies.
+
+## ✨ What it does
+
+- Counts photos, videos, subfolders and duplicates in a folder tree.
+- Proposes chronological filenames and flags occupied destinations before you apply changes.
+- Compares duplicate files byte for byte. You can keep all copies or retain one from each group.
+- Keeps files in their existing folders by default. You can bring the surviving media into a single chronological sequence in the selected folder.
+- Processes media and metadata locally.
+
 ## Commands
 
 | Command | What it does |
@@ -86,7 +123,7 @@ Keep the executable in a folder on your user `Path` to run it by name from other
 | `--flatten` | Adds a root-level sequence to preview or apply. |
 | `media-organizer --help` / `--version` | Prints usage or the installed version. |
 
-## Organize interactively
+## ⌨️ Organize interactively
 
 Run `media-organizer` with no arguments in a terminal. From the source tree, use `cargo run --locked`.
 
@@ -153,10 +190,10 @@ cargo run --locked -- --help
 
 The executable is under `target/release/`. See the [contribution guide](CONTRIBUTING.md) for the full checks and the [architecture](docs/architecture.md) for the release workflow. For a container smoke test, use `docker compose run --rm --build media-organizer` or build and run the image with Podman.
 
-## Contributing and security
+## 🤝 Contributing and security
 
 Read the [contribution guide](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md) before opening a contribution. Follow the [security policy](SECURITY.md) to report vulnerabilities privately. The [product overview](docs/business/overview.md) describes the project goals.
 
-## License
+## 📄 License
 
 [MIT](LICENSE). Release archives include dependency and Rust toolchain notices in `third-party-notices/`.

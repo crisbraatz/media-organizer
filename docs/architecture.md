@@ -74,3 +74,5 @@ Accepted. Flattening plans one root sequence after optional duplicate filtering.
 ## ADR-006 — Guided terminal flow
 
 Accepted. Use Crossterm key events and bracketed paste handling for the no-argument flow when both input and output are terminals. Scope raw mode to each key-driven prompt. Restore normal terminal settings before displaying reports or reading the existing cooked confirmation line. Route the reviewed plan through the same validation and execution as flag-based apply. Keep positional arguments and redirected streams on the existing CLI path. [Crossterm event API](https://docs.rs/crossterm/0.29.0/crossterm/event/index.html)
+
+Installers resolve the stable GitHub release, verify the package checksum and stage the executable before replacement.
